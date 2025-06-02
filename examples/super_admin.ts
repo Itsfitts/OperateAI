@@ -37,12 +37,6 @@ METADATA
                     "description": "要执行的Shell命令",
                     "type": "string",
                     "required": true
-                },
-                {
-                    "name": "timeoutMs",
-                    "description": "可选的超时时间（毫秒）",
-                    "type": "string",
-                    "required": false
                 }
             ]
         }
@@ -58,11 +52,15 @@ const superAdmin = (function () {
      * @param sessionId - 可选的会话ID，用于使用特定的终端会话
      * @param timeoutMs - 可选的超时时间（毫秒）
      */
-    async function terminal(command: string, sessionId?: string, timeoutMs?: string): Promise<any> {
+    async function terminal(params: { command: string, sessionId?: string, timeoutMs?: string }): Promise<any> {
         try {
-            if (!command) {
+            if (!params.command) {
                 throw new Error("命令不能为空");
             }
+
+            const command = params.command;
+            const sessionId = params.sessionId;
+            const timeoutMs = params.timeoutMs;
 
             console.log(`执行终端命令: ${command}`);
 
@@ -92,19 +90,17 @@ const superAdmin = (function () {
      * @param command - 要执行的Shell命令
      * @param timeoutMs - 可选的超时时间（毫秒）
      */
-    async function shell(command: string, timeoutMs?: string): Promise<any> {
+    async function shell(params: { command: string }): Promise<any> {
         try {
-            if (!command) {
+            if (!params.command) {
                 throw new Error("命令不能为空");
             }
+            const command = params.command;
 
             console.log(`执行Shell命令: ${command}`);
 
-            // 将超时时间转换为数字类型
-            const timeout = timeoutMs ? parseInt(timeoutMs, 10) : undefined;
-
             // 使用ADB命令执行shell操作
-            const result = await Tools.System.adb(`shell ${command}`, timeout);
+            const result = await Tools.System.shell(`${command}`);
 
             return {
                 command: command,

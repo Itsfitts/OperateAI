@@ -72,7 +72,7 @@
     },
     {
       name: combined_search
-      description: 在多个平台同时执行搜索
+      description: 在多个平台同时执行搜索。建议用户要求搜索的时候默认使用这个工具。
       parameters: [
         {
           name: query
@@ -82,7 +82,7 @@
         },
         {
           name: platforms
-          description: 搜索平台列表，JSON数组，可选值包括"bing","baidu","sogou","quark"
+          description: 搜索平台列表字符串，可选值包括"bing","baidu","sogou","quark"，多个平台用逗号分隔，比如"bing,baidu"
           type: string
           required: true
         }
@@ -436,20 +436,14 @@ const various_search = (function () {
      * @returns {Promise<Object>} 包含搜索结果的Promise
      */
     async function combined_search(params) {
-        // 定义参数类型
-        const paramTypes = {
-            platforms: 'array',
-        };
-        // 转换参数类型
-        const convertedParams = convertParamTypes(params, paramTypes);
-        const { query, platforms } = convertedParams;
+        const { query, platforms } = params;
         if (!query || query.trim() === "") {
             return {
                 success: false,
                 message: "请提供有效的搜索查询"
             };
         }
-        if (!Array.isArray(platforms) || platforms.length === 0) {
+        if (!platforms || platforms.trim() === "") {
             return {
                 success: false,
                 message: "请提供有效的平台列表"
@@ -458,7 +452,7 @@ const various_search = (function () {
         const validPlatforms = [];
         const errors = [];
         // 验证平台
-        for (const platform of platforms) {
+        for (const platform of platforms.split(",")) {
             if (["bing", "baidu", "sogou", "quark"].includes(platform)) {
                 validPlatforms.push(platform);
             }

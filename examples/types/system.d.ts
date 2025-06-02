@@ -74,11 +74,10 @@ export namespace System {
     function getLocation(highAccuracy?: boolean, timeout?: number): Promise<LocationData>;
 
     /**
-     * Execute an ADB command (requires root access)
-     * @param command The ADB command to execute
-     * @param timeoutMs Optional timeout in milliseconds (default: 15000)
+     * Execute an shell command (requires root access)
+     * @param command The shell command to execute
      */
-    function adb(command: string, timeoutMs?: number): Promise<ADBResultData>;
+    function shell(command: string): Promise<ADBResultData>;
 
     /**
      * Execute an Intent

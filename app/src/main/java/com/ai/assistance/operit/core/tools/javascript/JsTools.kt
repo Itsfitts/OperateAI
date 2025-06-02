@@ -67,8 +67,7 @@ fun getJsToolsDefinition(): String {
                 // 获取设备位置
                 getLocation: (highAccuracy = false, timeout = 10) => 
                     toolCall("get_device_location", { high_accuracy: !!highAccuracy, timeout: parseInt(timeout) }),
-                shell: (command, timeoutMs) => toolCall("execute_shell", { command: command, timeout_ms: timeoutMs || 15000 
-                }),
+                shell: (command) => toolCall("execute_shell", { command: command }),
                 // 执行终端命令 - 一次性收集输出
                 terminal: (command, sessionId, timeoutMs) => {
                     const params = { command };

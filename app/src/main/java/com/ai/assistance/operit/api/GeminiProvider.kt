@@ -19,49 +19,50 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Google Gemini API的实现，支持标准Gemini接口及通过兼容层的OpenAI格式 */
+/** Google Gemini API的实现 支持标准Gemini接口流式传输 */
 class GeminiProvider(
         private val apiEndpoint: String,
         private val apiKey: String,
         private val modelName: String
 ) : AIService {
+    companion object {
+        private const val TAG = "GeminiProvider"
+        private const val DEBUG = true // 开启调试日志
+    }
+
+    // HTTP客户端
     private val client =
             OkHttpClient.Builder()
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .readTimeout(30, TimeUnit.SECONDS)
                     .writeTimeout(30, TimeUnit.SECONDS)
+                    .addInterceptor { chain ->
+                        val request = chain.request()
+                        val requestId = System.currentTimeMillis().toString()
+                        Log.d(TAG, "发送请求: ${request.method} ${request.url}")
+
+                        val startTime = System.currentTimeMillis()
+                        val response = chain.proceed(request)
+                        val duration = System.currentTimeMillis() - startTime
+
+                        Log.d(TAG, "收到响应: ${response.code}, 耗时: ${duration}ms")
+                        response
+                    }
                     .build()
 
     private val JSON = "application/json; charset=utf-8".toMediaType()
-    private val TAG = "GeminiProvider"
 
-    // 当前活跃的Call对象，用于取消流式传输
+    // 活跃请求，用于取消流式请求
     private var activeCall: Call? = null
 
-    // 添加token计数器
+    // Token计数
     private var _inputTokenCount = 0
     private var _outputTokenCount = 0
 
-    // 公开token计数
     override val inputTokenCount: Int
         get() = _inputTokenCount
     override val outputTokenCount: Int
         get() = _outputTokenCount
-
-    // Token计数逻辑
-    private fun estimateTokenCount(text: String): Int {
-        // 简单估算：中文每个字约1.5个token，英文每4个字符约1个token
-        val chineseCharCount = text.count { it.code in 0x4E00..0x9FFF }
-        val otherCharCount = text.length - chineseCharCount
-
-        return (chineseCharCount * 1.5 + otherCharCount * 0.25).toInt()
-    }
-
-    // 重置token计数
-    override fun resetTokenCounts() {
-        _inputTokenCount = 0
-        _outputTokenCount = 0
-    }
 
     // 取消当前流式传输
     override fun cancelStreaming() {
@@ -74,156 +75,193 @@ class GeminiProvider(
         activeCall = null
     }
 
-    /** 确定请求的实际URL 处理不同形式的Gemini API端点格式 */
-    private fun determineRequestUrl(
-            endpoint: String,
-            model: String,
-            isStreaming: Boolean = false
-    ): String {
-        // 如果端点已经包含完整的方法路径，则直接使用
-        if (endpoint.contains(":generateContent") || endpoint.contains(":streamGenerateContent")) {
-            return endpoint
-        }
-
-        // 判断是否是标准Gemini API端点
-        val isGeminiAPI = endpoint.contains("generativelanguage.googleapis.com")
-
-        // 如果是标准Gemini API
-        if (isGeminiAPI) {
-            val version = if (endpoint.contains("/v1/")) "v1" else "v1beta"
-            val baseUrl = extractBaseUrl(endpoint)
-            val method = if (isStreaming) "streamGenerateContent" else "generateContent"
-
-            // 检查端点是否已经包含models路径
-            if (endpoint.endsWith("/models")) {
-                return "$endpoint/$model:$method"
-            } else {
-                return "$baseUrl/$version/models/$model:$method"
-            }
-        }
-
-        // Vertex AI格式
-        else if (endpoint.contains("aiplatform.googleapis.com") || endpoint.contains("vertex")) {
-            val projectMatch = Regex("projects/([^/]+)").find(endpoint)
-            val locationMatch = Regex("locations/([^/]+)").find(endpoint)
-
-            if (projectMatch != null && locationMatch != null) {
-                val project = projectMatch.groupValues[1]
-                val location = locationMatch.groupValues[1]
-                val method = if (isStreaming) "streamGenerateContent" else "generateContent"
-                return "https://$location-aiplatform.googleapis.com/v1/projects/$project/locations/$location/publishers/google/models/$model:$method"
-            }
-        }
-
-        // 默认情况下使用标准Gemini API格式
-        val method = if (isStreaming) "streamGenerateContent" else "generateContent"
-        return "https://generativelanguage.googleapis.com/v1beta/models/$model:$method"
+    // 重置Token计数
+    override fun resetTokenCounts() {
+        _inputTokenCount = 0
+        _outputTokenCount = 0
     }
 
-    /** 从完整URL提取基本URL */
-    private fun extractBaseUrl(fullUrl: String): String {
-        return try {
-            val url = URL(fullUrl)
-            "${url.protocol}://${url.host}"
-        } catch (e: Exception) {
-            Log.e(TAG, "URL解析错误: $e")
-            fullUrl.substringBefore("/v1")
-        }
-    }
+    // 工具函数：分块打印大型文本日志
+    private fun logLargeString(tag: String, message: String, prefix: String = "") {
+        // 设置单次日志输出的最大长度（Android日志上限约为4000字符）
+        val maxLogSize = 3000
 
-    // 解析服务器返回的内容，处理<think>标签
-    private fun parseResponse(content: String): Pair<String, String?> {
-        val thinkStartTag = "<think>"
-        val thinkEndTag = "</think>"
+        // 如果消息长度超过限制，分块打印
+        if (message.length > maxLogSize) {
+            // 计算需要分多少块打印
+            val chunkCount = message.length / maxLogSize + 1
 
-        val startIndex = content.indexOf(thinkStartTag)
-        val endIndex = content.lastIndexOf(thinkEndTag)
+            for (i in 0 until chunkCount) {
+                val start = i * maxLogSize
+                val end = minOf((i + 1) * maxLogSize, message.length)
+                val chunkMessage = message.substring(start, end)
 
-        return if (startIndex != -1 && endIndex != -1 && startIndex < endIndex) {
-            // 提取思考内容和主要内容
-            val thinkContent = content.substring(startIndex + thinkStartTag.length, endIndex).trim()
-            val mainContent = content.substring(endIndex + thinkEndTag.length).trim()
-            Pair(mainContent, thinkContent)
-        } else if (startIndex != -1 && endIndex == -1) {
-            Pair("", content.substring(startIndex + thinkStartTag.length).trim())
+                // 打印带有编号的日志
+                Log.d(tag, "$prefix Part ${i+1}/$chunkCount: $chunkMessage")
+            }
         } else {
-            // 没有思考内容，返回原始内容
-            Pair(content, null)
+            // 消息长度在限制之内，直接打印
+            Log.d(tag, "$prefix$message")
         }
     }
 
-    // 创建Gemini API的请求体
-    private fun createRequestBody(
+    // 日志辅助方法
+    private fun logDebug(message: String) {
+        if (DEBUG) {
+            Log.d(TAG, message)
+        }
+    }
+
+    private fun logError(message: String, throwable: Throwable? = null) {
+        if (throwable != null) {
+            Log.e(TAG, message, throwable)
+        } else {
+            Log.e(TAG, message)
+        }
+    }
+
+    /** 发送消息到Gemini API */
+    override suspend fun sendMessage(
             message: String,
+            onPartialResponse: (content: String, thinking: String?) -> Unit,
             chatHistory: List<Pair<String, String>>,
-            modelParameters: List<ModelParameter<*>> = emptyList()
-    ): RequestBody {
-        // 检测API端点是否使用OpenAI兼容模式
-        val isOpenAICompatMode = apiEndpoint.contains("/openai/")
+            onComplete: () -> Unit,
+            onConnectionStatus: ((status: String) -> Unit)?,
+            modelParameters: List<ModelParameter<*>>
+    ) =
+            withContext(Dispatchers.IO) {
+                val requestId = System.currentTimeMillis().toString()
+                // 重置token计数
+                resetTokenCounts()
 
-        return if (isOpenAICompatMode) {
-            createOpenAICompatRequestBody(message, chatHistory, modelParameters)
-        } else {
-            createNativeGeminiRequestBody(message, chatHistory, modelParameters)
-        }
-    }
+                Log.d(TAG, "发送消息到Gemini API, 模型: $modelName")
 
-    // 创建原生Gemini API请求体
-    private fun createNativeGeminiRequestBody(
+                val maxRetries = 3
+                var retryCount = 0
+                var lastException: Exception? = null
+
+                val requestBody = createRequestBody(message, chatHistory, modelParameters)
+                val request = createRequest(requestBody, true, requestId) // 使用流式请求
+
+                onConnectionStatus?.invoke("连接到Gemini服务...")
+
+                while (retryCount < maxRetries) {
+                    try {
+                        val call = client.newCall(request)
+                        activeCall = call
+
+                        onConnectionStatus?.invoke("建立连接中...")
+
+                        val startTime = System.currentTimeMillis()
+                        call.execute().use { response ->
+                            val duration = System.currentTimeMillis() - startTime
+                            Log.d(TAG, "收到初始响应, 耗时: ${duration}ms, 状态码: ${response.code}")
+
+                            onConnectionStatus?.invoke("连接成功，处理响应...")
+
+                            if (!response.isSuccessful) {
+                                val errorBody = response.body?.string() ?: "无错误详情"
+                                logError("API请求失败: ${response.code}, $errorBody")
+                                throw IOException("API请求失败: ${response.code}, $errorBody")
+                            }
+
+                            // 处理响应
+                            processResponse(response, onPartialResponse, onComplete, requestId)
+                        }
+
+                        activeCall = null
+                        return@withContext
+                    } catch (e: SocketTimeoutException) {
+                        lastException = e
+                        retryCount++
+                        logError("连接超时，尝试重试 $retryCount/$maxRetries", e)
+
+                        onConnectionStatus?.invoke("连接超时，正在重试 $retryCount...")
+                        delay(1000L * retryCount)
+                    } catch (e: UnknownHostException) {
+                        logError("无法连接到服务器，可能是网络问题", e)
+                        onConnectionStatus?.invoke("无法连接到服务器，请检查网络")
+                        throw IOException("无法连接到服务器，请检查网络连接")
+                    } catch (e: Exception) {
+                        logError("发送消息时发生异常", e)
+                        onConnectionStatus?.invoke("连接失败: ${e.message}")
+                        throw IOException("AI响应获取失败: ${e.message}")
+                    }
+                }
+
+                logError("重试${maxRetries}次后仍然失败", lastException)
+                onConnectionStatus?.invoke("重试失败，请检查网络连接")
+                throw IOException("连接超时，已重试 $maxRetries 次")
+            }
+
+    /** 创建请求体 */
+    private fun createRequestBody(
             message: String,
             chatHistory: List<Pair<String, String>>,
             modelParameters: List<ModelParameter<*>>
     ): RequestBody {
-        val jsonObject = JSONObject()
-
-        // 创建contents数组
+        val requestId = System.currentTimeMillis().toString()
+        val json = JSONObject()
         val contentsArray = JSONArray()
+
+        logDebug("开始创建请求体，历史消息: ${chatHistory.size}条")
 
         // 标准化历史消息
         val standardizedHistory = ChatUtils.mapChatHistoryToStandardRoles(chatHistory)
 
-        // 首先添加历史消息
-        if (chatHistory.isNotEmpty()) {
-            // 防止连续相同角色消息
-            val filteredHistory = mutableListOf<Pair<String, String>>()
+        // 调试输出所有历史消息
+        for ((index, pair) in standardizedHistory.withIndex()) {
+            logDebug("历史消息[$index]: role=${pair.first}, content长度=${pair.second.length}")
+        }
+
+        // 处理历史消息
+        if (standardizedHistory.isNotEmpty()) {
             var lastRole: String? = null
+            var hasSystemMessage = false
+            var systemContent: String? = null
 
-            for ((role, content) in standardizedHistory) {
-                // 如果是系统消息，处理逻辑
-                if (role == "system") {
-                    // 检查是否是支持systemInstruction的模型和端点
-                    // 只有gemini-2.0系列支持systemInstruction，不包括gemini-1.5-flash
-                    if (modelName.contains("gemini-2") && !apiEndpoint.contains("flash")) {
-                        // 系统指令将在后面单独设置
-                        continue
-                    } else {
-                        // 对于不支持systemInstruction的模型，将系统消息作为用户消息处理
-                        val contentObject = JSONObject()
-                        val partsArray = JSONArray()
-                        val textPart = JSONObject()
-                        textPart.put("text", content)
-                        partsArray.put(textPart)
+            // 首先检查是否有系统消息
+            for ((index, pair) in standardizedHistory.withIndex()) {
+                if (pair.first == "system") {
+                    hasSystemMessage = true
+                    systemContent = pair.second
+                    logDebug("发现系统消息: ${systemContent.take(50)}...")
 
-                        contentObject.put("role", "user")
-                        contentObject.put("parts", partsArray)
-                        contentsArray.put(contentObject)
-
-                        // 计算输入token
-                        _inputTokenCount += estimateTokenCount(content)
-                        continue
-                    }
+                    // 估算token
+                    val tokens = estimateTokenCount(systemContent) + 20 // 增加一些token计数以包含额外的格式标记
+                    _inputTokenCount += tokens
+                    break // 只处理第一条系统消息
                 }
+            }
 
-                // 如果当前消息角色与上一个相同，跳过
-                if (role == lastRole) {
-                    Log.d(TAG, "跳过连续相同角色的消息: $role")
+            // 如果有系统消息，使用专用的system_instruction字段
+            if (hasSystemMessage && systemContent != null) {
+                val systemInstruction = JSONObject()
+                val systemPartsArray = JSONArray()
+                val systemTextPart = JSONObject()
+                
+                systemTextPart.put("text", systemContent)
+                systemPartsArray.put(systemTextPart)
+                
+                systemInstruction.put("parts", systemPartsArray)
+                json.put("systemInstruction", systemInstruction)
+            }
+
+            // 处理其余消息
+            for ((role, content) in standardizedHistory) {
+                // 跳过已处理的系统消息
+                if (role == "system") {
                     continue
                 }
 
-                filteredHistory.add(Pair(role, content))
+                // 如果与上一条消息角色相同，跳过
+                if (role == lastRole) {
+                    logDebug("跳过连续相同角色消息: $role")
+                    continue
+                }
+
                 lastRole = role
 
-                // 添加历史消息到contents数组
                 val contentObject = JSONObject()
                 val partsArray = JSONArray()
                 val textPart = JSONObject()
@@ -234,8 +272,9 @@ class GeminiProvider(
                 contentObject.put("parts", partsArray)
                 contentsArray.put(contentObject)
 
-                // 计算输入token
-                _inputTokenCount += estimateTokenCount(content)
+                // 估算token
+                val tokens = estimateTokenCount(content)
+                _inputTokenCount += tokens
             }
         }
 
@@ -250,38 +289,17 @@ class GeminiProvider(
         userContentObject.put("parts", userPartsArray)
         contentsArray.put(userContentObject)
 
-        // 计算当前消息的token
-        _inputTokenCount += estimateTokenCount(message)
+        // 估算token
+        val tokens = estimateTokenCount(message)
+        _inputTokenCount += tokens
 
-        // 添加内容到请求体
-        jsonObject.put("contents", contentsArray)
-
-        // 检查是否有系统指令（只有特定Gemini模型支持）
-        val systemMessage = standardizedHistory.find { pair -> pair.first == "system" }
-        // 只有gemini-2.0系列支持systemInstruction，不包括gemini-1.5-flash
-        if (systemMessage != null &&
-                        modelName.contains("gemini-2") &&
-                        !apiEndpoint.contains("flash") &&
-                        !modelName.contains("flash")
-        ) {
-            val systemInstructionObject = JSONObject()
-            val systemPartsArray = JSONArray()
-            val systemTextPart = JSONObject()
-
-            systemTextPart.put("text", systemMessage.second)
-            systemPartsArray.put(systemTextPart)
-
-            systemInstructionObject.put("parts", systemPartsArray)
-            jsonObject.put("systemInstruction", systemInstructionObject)
-
-            // 计算系统指令token
-            _inputTokenCount += estimateTokenCount(systemMessage.second)
-        }
+        // 添加contents到请求体
+        json.put("contents", contentsArray)
 
         // 添加生成配置
         val generationConfig = JSONObject()
 
-        // 添加已启用的模型参数
+        // 添加模型参数
         for (param in modelParameters) {
             if (param.isEnabled) {
                 when (param.apiName) {
@@ -298,432 +316,337 @@ class GeminiProvider(
                                     "maxOutputTokens",
                                     (param.currentValue as Number).toInt()
                             )
-                    else -> {
-                        // 其他Gemini特定参数
-                        generationConfig.put(param.apiName, param.currentValue)
-                    }
+                    else -> generationConfig.put(param.apiName, param.currentValue)
                 }
-                Log.d(TAG, "添加参数 ${param.apiName} = ${param.currentValue}")
             }
         }
 
-        jsonObject.put("generationConfig", generationConfig)
+        json.put("generationConfig", generationConfig)
 
+        val jsonString = json.toString()
         // 使用分块日志函数记录完整的请求体
-        Log.d(TAG, "Gemini 请求体: ${jsonObject.toString(4)}")
-        return jsonObject.toString().toRequestBody(JSON)
+        logLargeString(TAG, jsonString, "请求体JSON: ")
+
+        return jsonString.toRequestBody(JSON)
     }
 
-    // 创建OpenAI兼容模式的请求体
-    private fun createOpenAICompatRequestBody(
-            message: String,
-            chatHistory: List<Pair<String, String>>,
-            modelParameters: List<ModelParameter<*>>
-    ): RequestBody {
-        val jsonObject = JSONObject()
-        jsonObject.put("model", modelName)
-        jsonObject.put("stream", true)
+    /** 创建HTTP请求 */
+    private fun createRequest(
+            requestBody: RequestBody,
+            isStreaming: Boolean,
+            requestId: String
+    ): Request {
+        // 确定请求URL
+        val baseUrl = determineBaseUrl(apiEndpoint)
+        val method = if (isStreaming) "streamGenerateContent" else "generateContent"
+        val requestUrl = "$baseUrl/v1beta/models/$modelName:$method"
 
-        // 添加已启用的模型参数
-        for (param in modelParameters) {
-            if (param.isEnabled) {
-                when (param.valueType) {
-                    com.ai.assistance.operit.data.model.ParameterValueType.INT ->
-                            jsonObject.put(param.apiName, param.currentValue as Int)
-                    com.ai.assistance.operit.data.model.ParameterValueType.FLOAT ->
-                            jsonObject.put(param.apiName, param.currentValue as Float)
-                    com.ai.assistance.operit.data.model.ParameterValueType.STRING ->
-                            jsonObject.put(param.apiName, param.currentValue as String)
-                    com.ai.assistance.operit.data.model.ParameterValueType.BOOLEAN ->
-                            jsonObject.put(param.apiName, param.currentValue as Boolean)
-                }
-                Log.d(TAG, "添加OpenAI兼容参数 ${param.apiName} = ${param.currentValue}")
-            }
-        }
-
-        // 创建消息数组
-        val messagesArray = JSONArray()
-
-        // 添加历史消息
-        if (chatHistory.isNotEmpty()) {
-            val standardizedHistory = ChatUtils.mapChatHistoryToStandardRoles(chatHistory)
-
-            // 防止连续相同角色消息
-            val filteredHistory = mutableListOf<Pair<String, String>>()
-            var lastRole: String? = null
-
-            for ((role, content) in standardizedHistory) {
-                // 如果当前消息角色与上一个相同，跳过（除了system消息）
-                if (role == lastRole && role != "system") {
-                    Log.d(TAG, "跳过连续相同角色的消息: $role")
-                    continue
-                }
-
-                filteredHistory.add(Pair(role, content))
-                lastRole = role
-            }
-
-            // 将过滤后的历史添加到消息数组
-            for ((role, content) in filteredHistory) {
-                val historyMessage = JSONObject()
-                historyMessage.put("role", role)
-                historyMessage.put("content", content)
-                messagesArray.put(historyMessage)
-
-                // 计算输入token
-                _inputTokenCount += estimateTokenCount(content)
-            }
-        }
-
-        // 添加当前消息
-        val lastMessageRole =
-                if (messagesArray.length() > 0) {
-                    messagesArray.getJSONObject(messagesArray.length() - 1).getString("role")
-                } else null
-
-        if (lastMessageRole != "user") {
-            val messageObject = JSONObject()
-            messageObject.put("role", "user")
-            messageObject.put("content", message)
-            messagesArray.put(messageObject)
-
-            // 计算当前消息的token
-            _inputTokenCount += estimateTokenCount(message)
-        } else {
-            // 如果上一条消息也是用户，将当前消息与上一条合并
-            Log.d(TAG, "合并连续的用户消息")
-            val lastMessage = messagesArray.getJSONObject(messagesArray.length() - 1)
-            val combinedContent = lastMessage.getString("content") + "\n" + message
-            lastMessage.put("content", combinedContent)
-
-            // 重新计算合并后消息的token
-            _inputTokenCount += estimateTokenCount(message)
-        }
-
-        jsonObject.put("messages", messagesArray)
-
-        // 添加推理努力度参数（特定于Gemini的"thinking"功能）
-        val reasoningEffort = modelParameters.find { it.apiName == "reasoning_effort" }
-        if (reasoningEffort != null && reasoningEffort.isEnabled) {
-            val value = reasoningEffort.currentValue as? String
-            if (!value.isNullOrEmpty()) {
-                jsonObject.put("reasoning_effort", value)
-                Log.d(TAG, "添加推理努力度参数: $value")
-            }
-        }
-
-        Log.d(TAG, "OpenAI兼容请求体: ${jsonObject.toString(4)}")
-        return jsonObject.toString().toRequestBody(JSON)
-    }
-
-    // 创建请求
-    private fun createRequest(requestBody: RequestBody, isStreaming: Boolean = false): Request {
-        // 检测API端点是否使用OpenAI兼容模式
-        val isOpenAICompatMode = apiEndpoint.contains("/openai/")
-
-        // 确定正确的URL
-        val requestUrl = determineRequestUrl(apiEndpoint, modelName, isStreaming)
         Log.d(TAG, "请求URL: $requestUrl")
 
-        val builder = Request.Builder().url(requestUrl).post(requestBody)
+        // 创建Request Builder
+        val builder = Request.Builder()
 
-        if (isOpenAICompatMode) {
-            // OpenAI兼容模式使用Bearer认证
-            builder.addHeader("Authorization", "Bearer $apiKey")
-        } else if (requestUrl.contains("vertex") || requestUrl.contains("aiplatform.googleapis.com")
-        ) {
-            // Vertex AI使用OAuth认证，需要外部提供Bearer令牌
-            builder.addHeader("Authorization", "Bearer $apiKey")
-        } else {
-            // 原生Gemini API使用API密钥参数
-            // 如果URL中已经包含了key参数，就不再重复添加
-            val actualUrl =
-                    if (!requestUrl.contains("key=")) {
-                        if (requestUrl.contains("?")) {
-                            "$requestUrl&key=$apiKey"
-                        } else {
-                            "$requestUrl?key=$apiKey"
-                        }
-                    } else {
-                        requestUrl
-                    }
+        // 添加API密钥
+        val finalUrl =
+                if (requestUrl.contains("?")) {
+                    "$requestUrl&key=$apiKey"
+                } else {
+                    "$requestUrl?key=$apiKey"
+                }
 
-            builder.url(actualUrl)
-        }
-
-        builder.addHeader("Content-Type", "application/json")
-
-        return builder.build()
+        return builder.url(finalUrl)
+                .post(requestBody)
+                .addHeader("Content-Type", "application/json")
+                .build()
     }
 
-    // 处理响应
+    /** 确定基础URL */
+    private fun determineBaseUrl(endpoint: String): String {
+        return try {
+            val url = URL(endpoint)
+            "${url.protocol}://${url.host}"
+        } catch (e: Exception) {
+            logError("解析API端点失败", e)
+            "https://generativelanguage.googleapis.com"
+        }
+    }
+
+    /** 处理API响应 */
     private suspend fun processResponse(
             response: Response,
             onPartialResponse: (content: String, thinking: String?) -> Unit,
-            onComplete: () -> Unit
+            onComplete: () -> Unit,
+            requestId: String
     ) {
-        if (!response.isSuccessful) {
-            val errorBody = response.body?.string() ?: "No error details"
-            throw IOException("API请求失败，状态码: ${response.code}，错误信息: $errorBody")
-        }
-
-        val responseBody = response.body ?: throw IOException("API响应为空")
+        Log.d(TAG, "开始处理响应流")
+        val responseBody = response.body ?: throw IOException("响应为空")
         val reader = responseBody.charStream().buffered()
-        val isOpenAICompatMode = response.request.url.toString().contains("/openai/")
 
-        var currentContent = StringBuilder()
-        var currentThinking = StringBuilder()
-        var isFirstResponse = true
-        var wasCancelled = false // 添加取消标志
+        // 用于累积内容
+        val fullContent = StringBuilder()
+        var lineCount = 0
+        var dataCount = 0
+        var jsonCount = 0
+        var contentCount = 0
+        var hasContent = false
+
+        // 针对非SSE格式的完整JSON响应
+        val completeJsonBuilder = StringBuilder()
+        var isCollectingJson = false
+        var jsonDepth = 0
+        var jsonStartSymbol = ' ' // 记录JSON是以 { 还是 [ 开始的
 
         try {
             reader.useLines { lines ->
                 lines.forEach { line ->
-                    // 如果call已被取消，提前退出
+                    lineCount++
+                    // 检查是否已取消
                     if (activeCall?.isCanceled() == true) {
-                        Log.d(TAG, "流式传输已被取消，提前退出处理")
-                        wasCancelled = true // 设置取消标志
                         return@forEach
                     }
 
-                    // 处理Server-Sent Events (SSE)格式的响应
+                    // 处理SSE数据
                     if (line.startsWith("data: ")) {
                         val data = line.substring(6).trim()
-                        if (data != "[DONE]") {
-                            try {
-                                val jsonResponse = JSONObject(data)
+                        dataCount++
 
-                                if (isOpenAICompatMode) {
-                                    // 处理OpenAI兼容格式
-                                    processOpenAICompatResponse(
-                                            jsonResponse,
-                                            currentContent,
-                                            currentThinking,
-                                            onPartialResponse,
-                                            isFirstResponse
-                                    )
-                                } else {
-                                    // 处理原生Gemini API格式
-                                    processNativeGeminiResponse(
-                                            jsonResponse,
-                                            currentContent,
-                                            currentThinking,
-                                            onPartialResponse,
-                                            isFirstResponse
-                                    )
+                        // 跳过结束标记
+                        if (data == "[DONE]") {
+                            logDebug("收到流结束标记 [DONE]")
+                            return@forEach
+                        }
+
+                        try {
+                            // 解析JSON
+                            val json = JSONObject(data)
+                            jsonCount++
+                            logDebug("成功解析SSE数据为JSON")
+
+                            val content = extractContentFromJson(json, requestId)
+
+                            if (content.isNotEmpty()) {
+                                contentCount++
+                                fullContent.append(content)
+                                hasContent = true
+                                logDebug("提取内容成功，当前累积内容长度: ${fullContent.length}")
+
+                                // 发送累积内容
+                                onPartialResponse(fullContent.toString(), null)
+                            }
+                        } catch (e: Exception) {
+                            logError("解析SSE响应数据失败: ${e.message}", e)
+                        }
+                    } else if (line.trim().isNotEmpty()) {
+                        // 检查是否开始收集JSON
+                        if (!isCollectingJson &&
+                                        (line.trim().startsWith("{") || line.trim().startsWith("["))
+                        ) {
+                            isCollectingJson = true
+                            jsonDepth = 0
+                            completeJsonBuilder.clear()
+                            jsonStartSymbol = line.trim()[0]
+                            logDebug("开始收集JSON，起始符号: $jsonStartSymbol")
+                        }
+
+                        if (isCollectingJson) {
+                            completeJsonBuilder.append(line.trim())
+
+                            // 更新JSON深度
+                            for (char in line) {
+                                if (char == '{' || char == '[') jsonDepth++
+                                if (char == '}' || char == ']') jsonDepth--
+                            }
+
+                            // 检查是否JSON已完成
+                            val isJsonComplete =
+                                    jsonDepth <= 0 &&
+                                            ((jsonStartSymbol == '{' &&
+                                                    (line.endsWith("}") || line.endsWith("},"))) ||
+                                                    (jsonStartSymbol == '[' &&
+                                                            (line.endsWith("]") ||
+                                                                    line.endsWith("],"))))
+
+                            if (isJsonComplete) {
+                                val completeJson = completeJsonBuilder.toString()
+
+                                // 处理逗号结尾情况
+                                val cleanJson =
+                                        if (completeJson.endsWith(",")) {
+                                            completeJson.substring(0, completeJson.length - 1)
+                                        } else {
+                                            completeJson
+                                        }
+
+                                try {
+                                    logDebug("解析完整JSON，长度: ${cleanJson.length}")
+                                    logLargeString(TAG, cleanJson, "完整JSON响应: ")
+
+                                    // 解析完整的JSON
+                                    val jsonContent: Any? =
+                                            if (cleanJson.startsWith("[")) {
+                                                JSONArray(cleanJson)
+                                            } else {
+                                                JSONObject(cleanJson)
+                                            }
+
+                                    when (jsonContent) {
+                                        is JSONArray -> {
+                                            // 处理JSON数组
+                                            for (i in 0 until jsonContent.length()) {
+                                                val jsonObject = jsonContent.optJSONObject(i)
+                                                if (jsonObject != null) {
+                                                    jsonCount++
+
+                                                    val content =
+                                                            extractContentFromJson(
+                                                                    jsonObject,
+                                                                    requestId
+                                                            )
+                                                    if (content.isNotEmpty()) {
+                                                        contentCount++
+                                                        fullContent.append(content)
+                                                        hasContent = true
+                                                        logDebug(
+                                                                "从JSON数组[$i]提取内容，长度: ${content.length}"
+                                                        )
+
+                                                        // 发送累积内容
+                                                        onPartialResponse(
+                                                                fullContent.toString(),
+                                                                null
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        is JSONObject -> {
+                                            // 处理单个JSON对象
+                                            jsonCount++
+                                            logDebug("处理单个JSON对象")
+
+                                            val content =
+                                                    extractContentFromJson(jsonContent, requestId)
+                                            if (content.isNotEmpty()) {
+                                                contentCount++
+                                                fullContent.append(content)
+                                                hasContent = true
+                                                logDebug("从JSON对象提取内容，长度: ${content.length}")
+
+                                                // 发送累积内容
+                                                onPartialResponse(fullContent.toString(), null)
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    logError("解析完整JSON失败: ${e.message}", e)
                                 }
 
-                                // 当收到第一个有效内容时，标记不再是首次响应
-                                if (isFirstResponse) {
-                                    isFirstResponse = false
-                                }
-                            } catch (e: Exception) {
-                                // 忽略解析错误，继续处理下一行
-                                Log.d(TAG, "JSON解析错误: ${e.message}")
+                                // 检查下一行是否开始新的JSON
+                                isCollectingJson = false
                             }
                         }
                     }
                 }
             }
-        } catch (e: IOException) {
-            // 捕获IO异常，可能是由于取消Call导致的
-            if (activeCall?.isCanceled() == true) {
-                Log.d(TAG, "流式传输已被取消，处理IO异常")
-                wasCancelled = true // 设置取消标志
+
+            Log.d(TAG, "响应处理完成: 共${lineCount}行, ${jsonCount}个JSON块, 提取${contentCount}个内容块")
+
+            // 确保发送最终内容
+            if (!hasContent) {
+                // 如果没有内容，发送一个空格以确保回调触发
+                logDebug("未检测到内容，发送空格以触发回调")
+                onPartialResponse(" ", null)
             } else {
-                throw e
+                logDebug("发送最终内容，长度: ${fullContent.length}")
+                onPartialResponse(fullContent.toString(), null)
             }
-        }
 
-        // 只有在未被取消时才调用完成回调
-        if (!wasCancelled && activeCall?.isCanceled() != true) {
-            Log.d(TAG, "处理完成，调用完成回调")
+            // 调用完成回调
             onComplete()
-        } else {
-            Log.d(TAG, "流被取消，跳过完成回调")
+        } catch (e: Exception) {
+            logError("处理响应时发生异常: ${e.message}", e)
+            throw e
+        } finally {
+            activeCall = null
         }
-
-        // 清理活跃Call引用
-        activeCall = null
     }
 
-    // 处理OpenAI兼容格式的响应
-    private fun processOpenAICompatResponse(
-            jsonResponse: JSONObject,
-            currentContent: StringBuilder,
-            currentThinking: StringBuilder,
-            onPartialResponse: (content: String, thinking: String?) -> Unit,
-            isFirstResponse: Boolean
-    ) {
-        val choices = jsonResponse.optJSONArray("choices")
+    /** 从Gemini响应JSON中提取内容 */
+    private fun extractContentFromJson(json: JSONObject, requestId: String): String {
+        val contentBuilder = StringBuilder()
 
-        if (choices != null && choices.length() > 0) {
-            val choice = choices.getJSONObject(0)
-
-            // 处理delta格式（流式响应）
-            val delta = choice.optJSONObject("delta")
-            if (delta != null) {
-                // 尝试获取常规内容
-                val content = delta.optString("content", "")
-
-                // 更新内容
-                if (content.isNotEmpty() && content != "null") {
-                    currentContent.append(content)
-
-                    // 计算输出tokens
-                    _outputTokenCount += estimateTokenCount(content)
-
-                    // 解析内容，检查<think>标签
-                    val (mainContent, thinkContent) = parseResponse(currentContent.toString())
-
-                    // 确定最终输出内容
-                    val finalContent =
-                            if (mainContent.isNotEmpty()) mainContent else currentContent.toString()
-
-                    // 确定思考内容
-                    val finalThinking = thinkContent
-
-                    onPartialResponse(finalContent, finalThinking)
-                }
+        try {
+            // 检查是否有错误信息
+            if (json.has("error")) {
+                val error = json.getJSONObject("error")
+                val errorMsg = error.optString("message", "未知错误")
+                logError("API返回错误: $errorMsg")
+                return "" // 有错误时返回空字符串
             }
-        }
-    }
 
-    // 处理原生Gemini API格式的响应
-    private fun processNativeGeminiResponse(
-            jsonResponse: JSONObject,
-            currentContent: StringBuilder,
-            currentThinking: StringBuilder,
-            onPartialResponse: (content: String, thinking: String?) -> Unit,
-            isFirstResponse: Boolean
-    ) {
-        val candidates = jsonResponse.optJSONArray("candidates")
+            // 提取候选项
+            val candidates = json.optJSONArray("candidates")
+            if (candidates == null || candidates.length() == 0) {
+                logDebug("未找到候选项")
+                return ""
+            }
 
-        if (candidates != null && candidates.length() > 0) {
+            // 处理第一个candidate
             val candidate = candidates.getJSONObject(0)
+
+            // 检查finish_reason
+            val finishReason = candidate.optString("finishReason", "")
+            if (finishReason.isNotEmpty() && finishReason != "STOP") {
+                logDebug("收到完成原因: $finishReason")
+            }
+
+            // 提取content对象
             val content = candidate.optJSONObject("content")
+            if (content == null) {
+                logDebug("未找到content对象")
+                return ""
+            }
 
-            if (content != null) {
-                val parts = content.optJSONArray("parts")
+            // 提取parts数组
+            val parts = content.optJSONArray("parts")
+            if (parts == null || parts.length() == 0) {
+                logDebug("未找到parts数组或为空")
+                return ""
+            }
 
-                if (parts != null && parts.length() > 0) {
-                    for (i in 0 until parts.length()) {
-                        val part = parts.getJSONObject(i)
-                        val text = part.optString("text", "")
+            // 遍历parts，提取text内容
+            for (i in 0 until parts.length()) {
+                val part = parts.getJSONObject(i)
+                val text = part.optString("text", "")
 
-                        if (text.isNotEmpty()) {
-                            // 更新内容
-                            currentContent.append(text)
+                if (text.isNotEmpty()) {
+                    contentBuilder.append(text)
 
-                            // 计算输出tokens
-                            _outputTokenCount += estimateTokenCount(text)
-                        }
-                    }
-
-                    // 检查有无thinking内容（Gemini特有）
-                    val isThinking = candidate.optBoolean("isThinking", false)
-                    val reasoning = content.optString("reasoning", "")
-
-                    if (isThinking || reasoning.isNotEmpty()) {
-                        if (reasoning.isNotEmpty()) {
-                            currentThinking.append(reasoning)
-                        } else {
-                            // 尝试从content中提取thinking内容
-                            val (mainContent, thinkContent) =
-                                    parseResponse(currentContent.toString())
-                            if (thinkContent != null) {
-                                currentThinking.append(thinkContent)
-                            }
-                        }
-                    }
-
-                    // 解析内容，检查<think>标签
-                    val (mainContent, thinkContent) = parseResponse(currentContent.toString())
-
-                    // 确定最终输出内容
-                    val finalContent =
-                            if (mainContent.isNotEmpty()) mainContent else currentContent.toString()
-
-                    // 确定思考内容，优先使用Gemini专有的reasoning字段
-                    val finalThinking =
-                            if (currentThinking.isNotEmpty()) currentThinking.toString()
-                            else thinkContent
-
-                    onPartialResponse(finalContent, finalThinking)
+                    // 估算token
+                    val tokens = estimateTokenCount(text)
+                    _outputTokenCount += tokens
+                    logDebug("提取文本，长度=${text.length}, tokens=$tokens")
                 }
             }
+
+            return contentBuilder.toString()
+        } catch (e: Exception) {
+            logError("提取内容时发生错误: ${e.message}", e)
+            return ""
         }
     }
 
-    override suspend fun sendMessage(
-            message: String,
-            onPartialResponse: (content: String, thinking: String?) -> Unit,
-            chatHistory: List<Pair<String, String>>,
-            onComplete: () -> Unit,
-            onConnectionStatus: ((status: String) -> Unit)?,
-            modelParameters: List<ModelParameter<*>>
-    ) =
-            withContext(Dispatchers.IO) {
-                // 重置token计数
-                _inputTokenCount = 0
-                _outputTokenCount = 0
+    /** 估算Token数量 */
+    private fun estimateTokenCount(text: String): Int {
+        // 简单估算：中文每个字约1.5个token，英文每4个字符约1个token
+        val chineseCharCount = text.count { it.code in 0x4E00..0x9FFF }
+        val otherCharCount = text.length - chineseCharCount
 
-                val maxRetries = 3
-                var retryCount = 0
-                var lastException: Exception? = null
+        return (chineseCharCount * 1.5 + otherCharCount * 0.25).toInt()
+    }
 
-                val standardizedHistory = ChatUtils.mapChatHistoryToStandardRoles(chatHistory)
-                val requestBody = createRequestBody(message, standardizedHistory, modelParameters)
-                val request = createRequest(requestBody, true) // 创建流式请求
-
-                onConnectionStatus?.invoke("准备连接到Gemini AI服务...")
-                while (retryCount < maxRetries) {
-                    try {
-                        // 创建Call对象并保存到activeCall中，以便可以取消
-                        val call = client.newCall(request)
-                        activeCall = call
-
-                        onConnectionStatus?.invoke("正在建立连接...")
-                        call.execute().use { response ->
-                            onConnectionStatus?.invoke("连接成功，等待响应...")
-                            processResponse(response, onPartialResponse, onComplete)
-                        }
-
-                        // 成功处理后，清空activeCall
-                        activeCall = null
-
-                        // 成功处理，返回
-                        return@withContext
-                    } catch (e: SocketTimeoutException) {
-                        lastException = e
-                        retryCount++
-                        // 通知正在重试
-                        onConnectionStatus?.invoke("连接超时，正在进行第 $retryCount 次重试...")
-                        onPartialResponse("", "连接超时，正在进行第 $retryCount 次重试...")
-                        // 指数退避重试
-                        delay(1000L * retryCount)
-                    } catch (e: UnknownHostException) {
-                        onConnectionStatus?.invoke("无法连接到服务器，请检查网络")
-                        throw IOException("无法连接到服务器，请检查网络连接或API地址是否正确")
-                    } catch (e: Exception) {
-                        onConnectionStatus?.invoke("连接失败: ${e.message}")
-                        throw IOException(
-                                "AI响应获取失败: ${e.message} ${e.stackTrace.joinToString("\n")}"
-                        )
-                    }
-                }
-
-                onConnectionStatus?.invoke("重试失败，请检查网络连接")
-                // 所有重试都失败
-                throw IOException("连接超时，已重试 $maxRetries 次: ${lastException?.message}")
-            }
-
-    /**
-     * 获取模型列表 注意：此方法直接调用ModelListFetcher获取模型列表
-     * @return 模型列表结果
-     */
+    /** 获取模型列表 */
     override suspend fun getModelsList(): Result<List<ModelOption>> {
-        // 调用ModelListFetcher获取模型列表
         return ModelListFetcher.getModelsList(
                 apiKey = apiKey,
                 apiEndpoint = apiEndpoint,

@@ -161,7 +161,7 @@ class MessageProcessingDelegate(
                         },
                         chatHistory = history,
                         onComplete = { handleResponseComplete() },
-                        chatId = chatId  // 传递chatId参数
+                        chatId = chatId // 传递chatId参数
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "发送消息时出错", e)
@@ -247,51 +247,36 @@ class MessageProcessingDelegate(
         val chatHistory = getChatHistory()
         val lastUserIndex = chatHistory.indexOfLast { it.sender == "user" }
 
-        // 非增量模式下，直接使用新内容替换，而不是追加
         val contentToUse =
                 if (batchedAiContent.isNotEmpty()) {
-                    Log.d(TAG, "使用批处理内容: 内容长度=${batchedAiContent.length}")
-                    batchedAiContent = "" // 清空批处理缓冲区
-                    newContent // 非增量模式下使用最新内容
+                    batchedAiContent = ""
+                    newContent
                 } else {
-                    Log.d(TAG, "使用新内容: 内容长度=${newContent.length}")
                     newContent
                 }
 
         if (lastAiMessage != null) {
-            // 如果已有一个AI消息正在更新，直接替换其内容(非增量模式)
-            Log.d(TAG, "更新现有AI消息: 新内容长度=${contentToUse.length}")
-
-            // 创建更新后的消息对象，直接替换
             val newMessage =
                     ChatMessage(
                             sender = "ai",
-                            content = contentToUse, // 直接替换而非累加
-                            timestamp = lastAiMessage!!.timestamp
+                            content = contentToUse,
+                            timestamp = lastAiMessage?.timestamp ?: System.currentTimeMillis()
                     )
             lastAiMessage = newMessage
             addMessageToChat(newMessage)
         } else {
-            // 检查是否有一条AI回复在最后一条用户消息之后
             val lastAiIndex = chatHistory.indexOfLast { it.sender == "ai" }
-
             if (lastAiIndex > lastUserIndex && lastAiIndex >= 0) {
-                // 获取现有AI消息
                 val existingMessage = chatHistory[lastAiIndex]
-                Log.d(TAG, "发现现有AI消息: 替换为新内容")
-
-                // 创建更新后的消息对象
                 val newMessage =
                         ChatMessage(
                                 sender = "ai",
-                                content = contentToUse, // 直接替换而非累加
+                                content = contentToUse,
                                 timestamp = existingMessage.timestamp
                         )
                 lastAiMessage = newMessage
                 addMessageToChat(newMessage)
             } else {
-                // 这是本轮对话的第一个AI回复，创建新消息
-                Log.d(TAG, "创建首条AI回复: 内容长度=${contentToUse.length}")
                 val newMessage = ChatMessage("ai", contentToUse)
                 lastAiMessage = newMessage
                 addMessageToChat(newMessage)
@@ -305,22 +290,26 @@ class MessageProcessingDelegate(
         updateJob?.cancel()
         updateJob = null
 
-        // 确保最终内容被更新到UI
-        if (batchedAiContent.isNotBlank()) {
-            appendAiContent(batchedAiContent)
-            batchedAiContent = "" // 清空批处理缓冲区
+        try {
+            // 确保最终内容被更新到UI
+            if (batchedAiContent.isNotBlank()) {
+                appendAiContent(batchedAiContent)
+                batchedAiContent = "" // 清空批处理缓冲区
+            }
+
+            // 重置变量前，先更新聊天统计和保存
+            _isLoading.value = false
+
+            // 更新统计数据并保存
+            updateChatStatistics()
+            saveCurrentChat() // 恢复保存，因为我们现在不会重复创建消息
+        } catch (e: Exception) {
+            Log.e(TAG, "处理响应完成时发生错误", e)
+        } finally {
+            // 无论如何都要重置状态变量
+            lastAiUpdateTime = 0
+            lastAiMessage = null // 重置消息引用
         }
-
-        // 重置变量前，先更新聊天统计和保存
-        _isLoading.value = false
-
-        // 更新统计数据并保存
-        updateChatStatistics()
-        saveCurrentChat() // 恢复保存，因为我们现在不会重复创建消息
-
-        // 最后再重置所有状态变量
-        lastAiUpdateTime = 0
-        lastAiMessage = null // 重置消息引用
     }
 
     /** 取消当前对话 */

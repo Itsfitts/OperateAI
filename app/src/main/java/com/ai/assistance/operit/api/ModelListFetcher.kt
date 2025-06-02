@@ -73,7 +73,7 @@ object ModelListFetcher {
                         }
                     }
                     ApiProviderType.DEEPSEEK -> "${extractBaseUrl(apiEndpoint)}/v1/models"
-                    ApiProviderType.OPENROUTER -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.OPENROUTER -> "${extractBaseUrl(apiEndpoint)}/api/v1/models"
                     ApiProviderType.MOONSHOT -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.SILICONFLOW -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.BAICHUAN -> "${extractBaseUrl(apiEndpoint)}/v1/models"
@@ -158,6 +158,13 @@ object ModelListFetcher {
                                     "添加Google API密钥，完整URL: ${urlWithKey.replace(apiKey, "API_KEY_HIDDEN")}"
                             )
                             requestBuilder.url(urlWithKey)
+                        }
+                        ApiProviderType.OPENROUTER -> {
+                            // OpenRouter需要添加特定请求头
+                            Log.d(TAG, "使用Bearer认证方式并添加OpenRouter特定请求头")
+                            requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+                            requestBuilder.addHeader("HTTP-Referer", "ai.assistance.operit")
+                            requestBuilder.addHeader("X-Title", "Assistance App")
                         }
                         else -> {
                             // 大多数API使用Bearer认证
