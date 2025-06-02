@@ -4,6 +4,7 @@
     
     <!-- Navigation -->
     <string name="nav_ai_chat">AI 对话</string>
+    <string name="agent">语言助手</string>
     <string name="nav_adb_commands">权限授予</string>
     <string name="nav_settings">设置</string>
     <string name="nav_tool_permissions">工具权限</string>

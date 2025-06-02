@@ -4,6 +4,7 @@
     
     <!-- Navigation -->
     <string name="nav_ai_chat">AI Chat</string>
+    <string name="agent">Agent</string>
     <string name="nav_adb_commands">Permissions</string>
     <string name="nav_settings">Settings</string>
     <string name="nav_tool_permissions">Tool Permissions</string>

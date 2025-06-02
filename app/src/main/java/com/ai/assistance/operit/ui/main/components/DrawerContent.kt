@@ -104,6 +104,17 @@ fun DrawerContent(
                 }
         )
 
+        // Agent语音
+        CompactNavigationDrawerItem(
+            icon = NavItem.Agent.icon,
+            label = stringResource(id = NavItem.Agent.titleResId),
+            selected = currentScreen is Screen.Agent,
+            onClick = {
+                onScreenSelected(Screen.Agent, NavItem.Agent)
+                scope.launch { drawerState.close() }
+            }
+        )
+
         // 问题库
         CompactNavigationDrawerItem(
                 icon = NavItem.ProblemLibrary.icon,
@@ -258,6 +269,7 @@ fun CollapsedDrawerContent(
                                     NavItem.Help -> Screen.Help
                                     NavItem.About -> Screen.About
                                     NavItem.TokenConfig -> Screen.TokenConfig
+                                    NavItem.Agent -> Screen.Agent
                                     else -> Screen.AiChat
                                 }
                         onScreenSelected(screen, item)

@@ -32,6 +32,7 @@ import com.ai.assistance.operit.ui.features.toolbox.screens.TerminalToolScreen
 import com.ai.assistance.operit.ui.features.toolbox.screens.ToolboxScreen
 import com.ai.assistance.operit.ui.features.toolbox.screens.UIDebuggerToolScreen
 import com.ai.assistance.operit.ui.features.toolbox.screens.ffmpegtoolbox.FFmpegToolboxScreen
+import com.ai.assistance.operit.ui.features.voice.VoiceAssistantScreen
 
 // 路由配置类
 typealias ScreenNavigationHandler = (Screen) -> Unit
@@ -219,6 +220,26 @@ sealed class Screen(
                         onGestureConsumed: (Boolean) -> Unit
                 ) {
                         AboutScreen()
+                }
+        }
+
+        data object Agent : Screen(navItem = NavItem.Agent) {
+                @Composable
+                override fun Content(
+                        navController: NavController,
+                        navigateTo: ScreenNavigationHandler,
+                        updateNavItem: NavItemChangeHandler,
+                        hasBackgroundImage: Boolean,
+                        onLoading: (Boolean) -> Unit,
+                        onError: (String) -> Unit,
+                        onGestureConsumed: (Boolean) -> Unit
+                ) {
+                        VoiceAssistantScreen(
+                                onNavigateToSettings = {
+                                        navigateTo(Settings)
+                                        updateNavItem(NavItem.Settings)
+                                }
+                        )
                 }
         }
 
@@ -621,6 +642,7 @@ object OperitRouter {
                         NavItem.About -> Screen.About
                         NavItem.TokenConfig -> Screen.TokenConfig
                         NavItem.UserPreferencesGuide -> Screen.UserPreferencesGuide()
+                        NavItem.Agent -> Screen.Agent
                         else -> Screen.AiChat
                 }
         }
