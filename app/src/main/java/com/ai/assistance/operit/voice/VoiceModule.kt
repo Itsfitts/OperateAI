@@ -8,17 +8,20 @@ import com.ai.assistance.operit.data.model.VoiceActionType
 import com.ai.assistance.operit.data.model.VoiceCommand
 import com.ai.assistance.operit.data.model.VoiceProfile
 import com.ai.assistance.operit.data.preferences.VoicePreferences
+import com.ai.assistance.operit.data.preferences.VoicePreferences.ReadResponseMode
 import com.ai.assistance.operit.voice.WakeWordDetector.WakeEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -53,18 +56,24 @@ class VoiceModule(
     // 用于跟踪模块是否初始化完成
     private val isInitialized = AtomicBoolean(false)
     private val isInitializing = AtomicBoolean(false)
+
+    private var batchedAiContent: String = ""
+    private var lastAiUpdateTime: Long = 0
+    private var updateJob: Job? = null
+    private var readType: ReadResponseMode = ReadResponseMode.FULL
+
+    private var speakTimestamp: Long = 0
+    private var recognitionJob: Job? = null
     
     init {
         // 初始化仅依赖于context的组件
-        moduleScope.launch {
-            initializeModule()
-        }
+        initializeModule()
     }
     
     /**
      * 初始化模块
      */
-    private suspend fun initializeModule() {
+    private fun initializeModule() {
         if (!isInitializing.compareAndSet(false, true)) {
             return
         }
@@ -92,7 +101,6 @@ class VoiceModule(
             voiceCommandProcessor = VoiceCommandProcessor(
                 context,
                 aiService,
-                aiToolHandler,
                 moduleScope,
                 chatHistory
             )
@@ -216,18 +224,20 @@ class VoiceModule(
     /**
      * 加载设置
      */
-    private suspend fun loadSettings() {
-        val voiceEnabled = voicePreferences.isVoiceEnabled()
-        val wakeWordEnabled = voicePreferences.isWakeWordEnabled()
-        val continuousListening = voicePreferences.getContinuousListeningEnabled()
-        val readResponses = voicePreferences.isReadResponsesEnabled()
-        
-        _voiceState.value = _voiceState.value.copy(
-            isVoiceEnabled = voiceEnabled,
-            isWakeWordEnabled = wakeWordEnabled,
-            isContinuousListeningEnabled = continuousListening,
-            isReadResponsesEnabled = readResponses
-        )
+    private fun loadSettings() {
+        moduleScope.launch {
+            val voiceEnabled = voicePreferences.isVoiceEnabled()
+            val wakeWordEnabled = voicePreferences.isWakeWordEnabled()
+            val continuousListening = voicePreferences.getContinuousListeningEnabled()
+            val readResponses = voicePreferences.isReadResponsesEnabled()
+
+            _voiceState.value = _voiceState.value.copy(
+                isVoiceEnabled = voiceEnabled,
+                isWakeWordEnabled = wakeWordEnabled,
+                isContinuousListeningEnabled = continuousListening,
+                isReadResponsesEnabled = readResponses
+            )
+        }
     }
     
     /**
@@ -245,25 +255,37 @@ class VoiceModule(
      * @param timeoutMs 超时时间，毫秒
      * @param wakeWordMode 是否使用唤醒词模式
      */
-    suspend fun startListening(timeoutMs: Long = 10000, wakeWordMode: Boolean = false) {
+    fun startListening(timeoutMs: Long = SPEAK_INTERVAL, wakeWordMode: Boolean = false) {
         checkInitialized()
-        
-        if (wakeWordMode && _voiceState.value.isWakeWordEnabled) {
-            // 使用唤醒词模式
-            wakeWordDetector.startListening(timeoutMs = null) // 持续监听唤醒词
-        } else {
-            // 直接开始语音识别
-            voiceRecognitionService.startListening(true)
-            
-            // 处理识别结果
-            moduleScope.launch {
-                voiceRecognitionService.recognitionResults
-                    .filter { it.isNotEmpty() }
-                    .collect { text ->
-                        handleVoiceCommand(text)
-                    }
+
+        val currentTime = System.currentTimeMillis()
+        if (recognitionJob == null || currentTime - speakTimestamp >= timeoutMs) {
+            recognitionJob?.cancel()
+
+            recognitionJob = moduleScope.launch {
+                // 先停止TTS讲话
+                textToSpeechService.stopSpeaking()
+
+                if (wakeWordMode && _voiceState.value.isWakeWordEnabled) {
+                    // 使用唤醒词模式 有BUG后面再研究
+                    wakeWordDetector.startListening(timeoutMs = null) // 持续监听唤醒词
+                } else {
+                    // 直接开始语音识别
+                    voiceRecognitionService.startListening(false)
+                    voicePreferences.setReadResponseMode(ReadResponseMode.FULL)
+
+                    voiceRecognitionService.recognitionResults
+                        .distinctUntilChanged()  // 只有当值改变时才发射
+                        .buffer(capacity = Channel.CONFLATED) // 只保留最新值
+                        .collect { text ->
+                            if (text.isNotEmpty()) {
+                                handleVoiceCommand(text)
+                            }
+                        }
+                }
             }
         }
+
     }
     
     /**
@@ -271,6 +293,8 @@ class VoiceModule(
      */
     suspend fun stopListening() {
         checkInitialized()
+        recognitionJob?.cancel()
+        recognitionJob = null
         
         if (_voiceState.value.isWakeWordEnabled && _voiceState.value.isListening) {
             wakeWordDetector.stopListening()
@@ -328,9 +352,6 @@ class VoiceModule(
                 chatId = chatId
             )
 
-            // 收集AI响应
-            var responseText = ""
-
         } catch (e: Exception) {
             Log.e(TAG, "Error handling AI response: ${e.message}")
             _voiceState.value = _voiceState.value.copy(
@@ -342,39 +363,82 @@ class VoiceModule(
     /** 处理AI响应完成 */
     private fun handleResponseComplete() {
         // 取消任何待处理的更新任务
+        updateJob?.cancel()
+        updateJob = null
+
+        // 先全量阅读吧
+        if (batchedAiContent.isNotEmpty()) {
+            handleReadResponseMode(batchedAiContent)
+        }
+
+        batchedAiContent = ""
+
+        // 取消任何待处理的更新任务
         // TODO
     }
 
     /** 处理AI响应过程 */
     private fun handlePartialResponse(content: String, thinking: String?) {
-        moduleScope.launch {
-            try {
-                if (_voiceState.value.isReadResponsesEnabled) {
-                    when (voicePreferences.getReadResponseMode()) {
-                        VoicePreferences.ReadResponseMode.FULL -> {
-                            speak(content)
-                        }
-                        VoicePreferences.ReadResponseMode.SUMMARY -> {
-                            // 这里可以添加逻辑来提取摘要
-                            val summary = extractSummary(content)
-                            speak(summary)
-                        }
-                        VoicePreferences.ReadResponseMode.SMART -> {
-                            // 根据响应长度和内容决定如何朗读
-                            if (content.length < 100) {
-                                speak(content)
-                            } else {
-                                val summary = extractSummary(content)
-                                speak(summary)
-                            }
-                        }
+        // TODO THINKING
+        if (content.isNotEmpty()) {
+            // 获取当前时间
+            val currentTime = System.currentTimeMillis()
+
+            if (updateJob == null || currentTime - lastAiUpdateTime >= TTS_UPDATE_INTERVAL) {
+                updateJob?.cancel()
+
+                updateJob =
+                    moduleScope.launch {
+                        // 获取阅读方式
+                        readType = voicePreferences.getReadResponseMode()
+
+                        // 更新最后更新时间
+                        lastAiUpdateTime = System.currentTimeMillis()
+
+                        // LLS阅读增量文本
+                        // handleReadResponseMode(content)
+
+                        // 等待下一个更新间隔
+                        delay(TTS_UPDATE_INTERVAL)
+
+                        // 任务完成
+                        updateJob = null
                     }
+            } else {
+                batchedAiContent = content // 直接替换为最新内容
+            }
+        }
+    }
+
+    /**
+     * 根据阅读模式来匹配不同的阅读方式
+     *
+     * @param text 原始文本
+     */
+    private fun handleReadResponseMode(content: String) {
+        when (readType) {
+            ReadResponseMode.FULL -> {
+                speak(content)
+            }
+
+            ReadResponseMode.SUMMARY -> {
+                // 这里可以添加逻辑来提取摘要
+                val summary = extractSummary(content)
+                speak(summary)
+            }
+
+            ReadResponseMode.SMART -> {
+                // 根据响应长度和内容决定如何朗读
+                if (content.length < 100) {
+                    speak(content)
+                } else {
+                    val summary = extractSummary(content)
+                    speak(summary)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error handling AI response: ${e.message}")
-                _voiceState.value = _voiceState.value.copy(
-                    error = "处理AI响应时发生错误: ${e.message}"
-                )
+            }
+
+            ReadResponseMode.STREAMING -> {
+                textToSpeechService.handleStreamingText(content)
             }
         }
     }
@@ -420,17 +484,14 @@ class VoiceModule(
      * @param text 要朗读的文本
      * @param interruptCurrent 是否中断当前朗读
      */
-    suspend fun speak(text: String, interruptCurrent: Boolean = false) {
+    fun speak(text: String, interruptCurrent: Boolean = false) {
         checkInitialized()
         
         if (!_voiceState.value.isVoiceEnabled) {
             return
         }
 
-        // IO线程中朗读
-        withContext(Dispatchers.IO) {
-            textToSpeechService.speak(text, interruptCurrent)
-        }
+        textToSpeechService.speak(text, interruptCurrent)
     }
     
     /**
@@ -449,7 +510,7 @@ class VoiceModule(
     suspend fun setVoiceEnabled(enabled: Boolean) {
         voicePreferences.setVoiceEnabled(enabled)
         _voiceState.value = _voiceState.value.copy(isVoiceEnabled = enabled)
-        
+
         // 如果禁用，确保停止所有活动
         if (!enabled) {
             stopListening()
@@ -538,5 +599,7 @@ class VoiceModule(
     
     companion object {
         private const val TAG = "VoiceModule"
+        private const val TTS_UPDATE_INTERVAL = 500L // 0.5 seconds in milliseconds
+        private const val SPEAK_INTERVAL = 500L // 0.5 seconds in milliseconds
     }
 } 

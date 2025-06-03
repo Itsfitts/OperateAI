@@ -1,9 +1,7 @@
 package com.ai.assistance.operit.voice
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
-import androidx.annotation.RequiresApi
 import com.ai.assistance.operit.data.preferences.VoicePreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,7 +9,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
@@ -103,20 +100,19 @@ class WakeWordDetector(
      * 开始监听唤醒词
      * @param timeoutMs 超时时间，如果为null则持续监听
      */
-    @RequiresApi(Build.VERSION_CODES.M)
     fun startListening(timeoutMs: Long? = null) {
         if (isListening.getAndSet(true)) {
             return
         }
-        
+
         detectorScope.launch {
             try {
                 _wakeEvents.emit(WakeEvent.ListeningStarted)
-                
+
                 withTimeoutOrNull(timeoutMs ?: Long.MAX_VALUE) {
                     // 使用语音识别服务进行连续监听
                     voiceRecognitionService.startListening(true)
-                    
+
                     // 订阅识别结果
                     voiceRecognitionService.recognitionResults
                         .filter { it.isNotEmpty() }
@@ -125,7 +121,7 @@ class WakeWordDetector(
                             val detectedWakeWord = checkForWakeWord(text)
                             if (detectedWakeWord != null) {
                                 _wakeEvents.emit(WakeEvent.WakeWordDetected(detectedWakeWord))
-                                
+
                                 // 获取实际命令（去除唤醒词）
                                 val command = extractCommand(text, detectedWakeWord)
                                 if (command.isNotBlank()) {
@@ -134,11 +130,11 @@ class WakeWordDetector(
                             }
                         }
                 }
-                
+
                 if (isListening.get()) {
                     stopListening()
                 }
-                
+
             } catch (e: Exception) {
                 Log.e(TAG, "Error in wake word detection: ${e.message}")
                 _wakeEvents.emit(WakeEvent.Error("唤醒词检测错误: ${e.message}"))
@@ -150,14 +146,20 @@ class WakeWordDetector(
     /**
      * 停止监听唤醒词
      */
-    suspend fun stopListening() {
+    fun stopListening() {
         if (!isListening.getAndSet(false)) {
             return
         }
         
         try {
             // voiceRecognitionService.stopRecognition()
-            _wakeEvents.emit(WakeEvent.ListeningStopped)
+            _wakeEvents.tryEmit(WakeEvent.ListeningStopped) // 先尝试非挂起方式
+                .takeIf { !it }        // 如果失败（返回 false）
+                ?.run {                // 则启动协程挂起 emit
+                    CoroutineScope(Dispatchers.Default).launch {
+                        _wakeEvents.emit(WakeEvent.ListeningStopped)
+                    }
+                }
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping wake word detection: ${e.message}")
         }

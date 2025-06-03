@@ -9,18 +9,13 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Build
 import android.util.Log
-import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
-import kotlin.coroutines.resume
 
 /**
  * 音频流管理器
@@ -46,27 +41,17 @@ class AudioStreamManager(private val context: Context) {
      * 开始音频流
      * @return 音频数据Flow
      */
-    @RequiresApi(Build.VERSION_CODES.M)
-    fun startAudioStream(): Flow<ByteArray> = flow {
+    private fun startAudioStream(): Flow<ByteArray> = flow {
         if (isRecording) {
             stopAudioStream()
         }
         
         try {
-            if (ActivityCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.RECORD_AUDIO
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                // TODO: Consider calling
-                //    ActivityCompat#requestPermissions
-                // here to request the missing permissions, and then overriding
-                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                //                                          int[] grantResults)
-                // to handle the case where the user grants the permission. See the documentation
-                // for ActivityCompat#requestPermissions for more details.
-                return@flow
+            if (ActivityCompat.checkSelfPermission(context,
+                    Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                throw SecurityException("RECORD_AUDIO permission not granted")
             }
+            
             audioRecord = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 sampleRate,
@@ -205,70 +190,50 @@ class AudioStreamManager(private val context: Context) {
      * 请求音频焦点
      * @return 是否成功获取音频焦点
      */
-    @RequiresApi(Build.VERSION_CODES.O)
     fun requestAudioFocus(): Boolean {
-        // 对于Android O及以上版本，使用AudioFocusRequest
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val audioAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
-            
-            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .setAudioAttributes(audioAttributes)
-                .setAcceptsDelayedFocusGain(true)
-                .setWillPauseWhenDucked(true)
-                .setOnAudioFocusChangeListener { focusChange ->
-                    // 处理音频焦点变化
-                    when (focusChange) {
-                        AudioManager.AUDIOFOCUS_LOSS -> {
-                            // 完全失去音频焦点
-                            Log.d(TAG, "Audio focus lost completely")
-                        }
-                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                            // 暂时失去音频焦点
-                            Log.d(TAG, "Audio focus lost temporarily")
-                        }
-                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                            // 暂时失去音频焦点，但可以降低音量继续播放
-                            Log.d(TAG, "Audio focus lost temporarily but can duck")
-                        }
-                        AudioManager.AUDIOFOCUS_GAIN -> {
-                            // 获得音频焦点
-                            Log.d(TAG, "Audio focus gained")
-                        }
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+
+        audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(audioAttributes)
+            .setAcceptsDelayedFocusGain(true)
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener { focusChange ->
+                // 处理音频焦点变化
+                when (focusChange) {
+                    AudioManager.AUDIOFOCUS_LOSS -> {
+                        // 完全失去音频焦点
+                        Log.d(TAG, "Audio focus lost completely")
+                    }
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                        // 暂时失去音频焦点
+                        Log.d(TAG, "Audio focus lost temporarily")
+                    }
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                        // 暂时失去音频焦点，但可以降低音量继续播放
+                        Log.d(TAG, "Audio focus lost temporarily but can duck")
+                    }
+                    AudioManager.AUDIOFOCUS_GAIN -> {
+                        // 获得音频焦点
+                        Log.d(TAG, "Audio focus gained")
                     }
                 }
-                .build()
-            
-            val result = audioManager.requestAudioFocus(audioFocusRequest!!)
-            return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        } else {
-            // 对于Android O以下版本，使用旧的API
-            @Suppress("DEPRECATION")
-            val result = audioManager.requestAudioFocus(
-                { focusChange -> 
-                    // 处理音频焦点变化
-                },
-                AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
-            )
-            return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        }
+            }
+            .build()
+
+        val result = audioManager.requestAudioFocus(audioFocusRequest!!)
+        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
     }
     
     /**
      * 放弃音频焦点
      */
     fun abandonAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest?.let {
-                audioManager.abandonAudioFocusRequest(it)
-                audioFocusRequest = null
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.abandonAudioFocus(null)
+        audioFocusRequest?.let {
+            audioManager.abandonAudioFocusRequest(it)
+            audioFocusRequest = null
         }
     }
     
@@ -276,7 +241,6 @@ class AudioStreamManager(private val context: Context) {
      * 拍下音频快照，用于语音识别
      * @param durationMs 录制时长，毫秒
      */
-    @RequiresApi(Build.VERSION_CODES.M)
     suspend fun captureAudioSnapshot(durationMs: Int = 5000): ByteArray = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         val outputStream = ByteArrayOutputStream()

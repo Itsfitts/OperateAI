@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -45,8 +46,8 @@ class VoiceRecognitionService(
      * 语音识别器提供商枚举
      */
     enum class RecognitionProvider {
-        GOOGLE_MLKIT,     // Google的ML Kit本地语音识别
         ANDROID_BUILTIN,  // Android内置的SpeechRecognizer
+        GOOGLE_MLKIT,     // Google的ML Kit本地语音识别
         WHISPER_LOCAL,    // 本地运行的Whisper模型
         OPENAI_API,       // OpenAI Whisper API
         AZURE_API,        // Microsoft Azure Speech API
@@ -69,8 +70,12 @@ class VoiceRecognitionService(
     val inputState: StateFlow<VoiceInputState> = _inputState.asStateFlow()
     
     // 识别结果
-    private val _recognitionResults = MutableSharedFlow<String>()
-    val recognitionResults: Flow<String> = _recognitionResults.asSharedFlow()
+    private val _recognitionResults = MutableSharedFlow<String>(
+        replay = 0,  // 不重放历史值
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val recognitionResults = _recognitionResults.asSharedFlow()
     
     // 部分识别结果
     private val _partialResults = MutableSharedFlow<String>()
@@ -217,7 +222,6 @@ class VoiceRecognitionService(
             )
             
             // 启动AudioStreamManager
-            audioStreamManager.startAudioCapture()
             
             // 根据当前提供商执行相应的启动逻辑
             when (currentProvider) {
@@ -255,9 +259,16 @@ class VoiceRecognitionService(
             
             // 设置语言
             val language = languageOverride ?: preferredLanguage
-            if (language != null && !autoDetectLanguage) {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language)
+            if (language != null && autoDetectLanguage) {
+                val languageTag = when (language) {
+                    "zh" -> "zh-CN"
+                    "en" -> "en-US"
+                    "jp" -> "ja-JP"
+                    else -> language
+                }
+
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
             } else {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toString())
             }
@@ -270,7 +281,7 @@ class VoiceRecognitionService(
     /**
      * 停止语音识别
      */
-    suspend fun stopListening() = withContext(Dispatchers.Main) {
+    fun stopListening() {
         try {
             continuousListening = false
             speechRecognizer?.stopListening()

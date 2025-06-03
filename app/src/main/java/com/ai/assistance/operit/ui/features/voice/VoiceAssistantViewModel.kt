@@ -39,56 +39,52 @@ class VoiceAssistantViewModel(
      */
     fun initializeVoiceModule() {
         if (voiceModule != null) return
-        
-        viewModelScope.launch {
-            try {
-                // 创建语音模块
-                voiceModule = VoiceModule(
-                    context = getApplication(),
-                    aiService = aiService,
-                    aiToolHandler = aiToolHandler
-                )
-                
-                // 监听语音模块状态变化
-                viewModelScope.launch {
-                    voiceModule?.voiceState?.collect { voiceState ->
-                        _uiState.update { currentState ->
-                            currentState.copy(
-                                isInitialized = voiceState.isInitialized,
-                                isVoiceEnabled = voiceState.isVoiceEnabled,
-                                isWakeWordEnabled = voiceState.isWakeWordEnabled,
-                                isReadResponsesEnabled = voiceState.isReadResponsesEnabled,
-                                isContinuousListeningEnabled = voiceState.isContinuousListeningEnabled,
-                                isListening = voiceState.isListening,
-                                isSpeaking = voiceState.isSpeaking,
-                                recognitionConfidence = voiceState.recognitionConfidence,
-                                noiseLevel = voiceState.noiseLevel,
-                                lastRecognizedText = voiceState.lastRecognizedText,
-                                lastWakeWord = voiceState.lastWakeWord,
-                                partialText = voiceState.partialText,
-                                lastCommand = voiceState.lastCommand,
-                                error = voiceState.error
-                            )
-                        }
+
+        try {
+            // 创建语音模块
+            voiceModule = VoiceModule(
+                context = getApplication(),
+                aiService = aiService,
+                aiToolHandler = aiToolHandler
+            )
+
+            // 监听语音模块状态变化
+            viewModelScope.launch {
+                voiceModule?.voiceState?.collect { voiceState ->
+                    _uiState.update { currentState ->
+                        currentState.copy(
+                            isInitialized = voiceState.isInitialized,
+                            isVoiceEnabled = voiceState.isVoiceEnabled,
+                            isWakeWordEnabled = voiceState.isWakeWordEnabled,
+                            isReadResponsesEnabled = voiceState.isReadResponsesEnabled,
+                            isContinuousListeningEnabled = voiceState.isContinuousListeningEnabled,
+                            isListening = voiceState.isListening,
+                            isSpeaking = voiceState.isSpeaking,
+                            recognitionConfidence = voiceState.recognitionConfidence,
+                            noiseLevel = voiceState.noiseLevel,
+                            lastRecognizedText = voiceState.lastRecognizedText,
+                            lastWakeWord = voiceState.lastWakeWord,
+                            partialText = voiceState.partialText,
+                            lastCommand = voiceState.lastCommand,
+                            error = voiceState.error
+                        )
                     }
                 }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(
-                    error = "初始化语音模块失败: ${e.message}"
-                )}
             }
+        } catch (e: Exception) {
+            _uiState.update { it.copy(
+                error = "初始化语音模块失败: ${e.message}"
+            )}
         }
     }
     
     /**
      * 开始语音监听
      */
-    suspend fun startListening() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            voiceModule?.startListening(
-                wakeWordMode = _uiState.value.isWakeWordEnabled
-            )
-        }
+    fun startListening() {
+        voiceModule?.startListening(
+            wakeWordMode = _uiState.value.isWakeWordEnabled
+        )
     }
     
     /**
@@ -125,16 +121,14 @@ class VoiceAssistantViewModel(
      */
     suspend fun toggleReadResponses() {
         val currentState = _uiState.value.isReadResponsesEnabled
-        voiceModule?.setVoiceEnabled(!currentState)
+        voiceModule?.setVoiceEnabled(currentState)
     }
     
     /**
      * 启动连续对话模式
      */
     suspend fun startContinuousConversation() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            voiceModule?.startContinuousConversation()
-        }
+        voiceModule?.startContinuousConversation()
     }
     
     /**

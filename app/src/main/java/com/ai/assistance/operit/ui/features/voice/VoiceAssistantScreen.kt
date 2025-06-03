@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -102,7 +103,7 @@ fun VoiceAssistantScreen(
     
     // 检查是否有语音权限
     CheckVoicePermissions { viewModel.initializeVoiceModule() }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -112,17 +113,20 @@ fun VoiceAssistantScreen(
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
-                    
-                    // 语音输出开关
+
+                    // 语音输出开关 - 根据初始化状态禁用
                     IconButton(
-                        onClick = { 
-                            coroutineScope.launch {
-                                viewModel.toggleReadResponses()
+                        onClick = {
+                            if (voiceState.isInitialized) {
+                                coroutineScope.launch {
+                                    viewModel.toggleReadResponses()
+                                }
                             }
-                        }
+                        },
+                        enabled = voiceState.isInitialized
                     ) {
                         Icon(
-                            if (voiceState.isReadResponsesEnabled) Icons.Default.VolumeUp 
+                            if (voiceState.isReadResponsesEnabled) Icons.Default.VolumeUp
                             else Icons.Default.VolumeOff,
                             contentDescription = "语音输出"
                         )
@@ -131,11 +135,12 @@ fun VoiceAssistantScreen(
             )
         },
         floatingActionButton = {
+            // 监听按钮 - 根据初始化状态禁用
             ListeningButton(
                 isListening = voiceState.isListening,
                 isInitialized = voiceState.isInitialized,
                 onStartListening = {
-                    coroutineScope.launch {
+                    if (voiceState.isInitialized) {
                         viewModel.startListening()
                     }
                 },
@@ -147,15 +152,41 @@ fun VoiceAssistantScreen(
             )
         }
     ) { paddingValues ->
-        VoiceAssistantContent(
-            voiceState = voiceState,
-            onToggleWakeWord = {
-                coroutineScope.launch {
-                    viewModel.toggleWakeWord()
+        // 显示初始化状态或错误消息
+        if (!voiceState.isInitialized) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator()
+                    Text("正在初始化语音助手...", style = MaterialTheme.typography.bodyLarge)
+
+                    if (voiceState.error != null) {
+                        Text(
+                            text = "错误: ${voiceState.error}",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                 }
-            },
-            modifier = Modifier.padding(paddingValues)
-        )
+            }
+        } else {
+            VoiceAssistantContent(
+                voiceState = voiceState,
+                onToggleWakeWord = {
+                    coroutineScope.launch {
+                        viewModel.toggleWakeWord()
+                    }
+                },
+                modifier = Modifier.padding(paddingValues)
+            )
+        }
     }
 }
 
@@ -433,18 +464,18 @@ fun ListeningButton(
         ),
         label = "pulse_animation"
     )
-    
+
     FloatingActionButton(
-        onClick = { 
-            if (isListening) onStopListening() else onStartListening() 
+        onClick = {
+            if (isListening) onStopListening() else onStartListening()
         },
         modifier = Modifier
             .scale(scale)
             .size(64.dp),
         shape = CircleShape,
-        containerColor = if (isListening) 
+        containerColor = if (isListening)
             MaterialTheme.colorScheme.error
-        else 
+        else
             MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
     ) {
@@ -548,10 +579,6 @@ fun CheckVoicePermissions(
  * 检查是否应该显示权限说明
  */
 private fun shouldShowRationale(context: Context, permission: String): Boolean {
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        val activity = context as? androidx.activity.ComponentActivity
-        activity?.shouldShowRequestPermissionRationale(permission) ?: false
-    } else {
-        false
-    }
+    val activity = context as? androidx.activity.ComponentActivity
+    return activity?.shouldShowRequestPermissionRationale(permission) ?: false
 } 

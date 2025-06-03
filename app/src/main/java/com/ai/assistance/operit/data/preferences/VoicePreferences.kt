@@ -29,7 +29,7 @@ class VoicePreferences(private val context: Context) {
         ignoreUnknownKeys = true
         isLenient = true
     }
-    
+
     // 偏好设置键
     companion object {
         private val VOICE_ENABLED = booleanPreferencesKey("voice_enabled")
@@ -366,6 +366,7 @@ class VoicePreferences(private val context: Context) {
     enum class ReadResponseMode {
         FULL,       // 完整朗读
         SUMMARY,    // 仅朗读摘要
-        SMART       // 智能模式（根据响应长度和内容决定）
+        SMART,       // 智能模式（根据响应长度和内容决定）
+        STREAMING       // 流式阅读（增量阅读）
     }
 } 

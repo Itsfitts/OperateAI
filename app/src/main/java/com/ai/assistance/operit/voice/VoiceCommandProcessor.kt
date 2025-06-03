@@ -5,6 +5,7 @@ import android.util.Log
 import com.ai.assistance.operit.api.EnhancedAIService
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.StringResultData
+import com.ai.assistance.operit.core.tools.defaultTool.ToolGetter
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolResult
@@ -27,7 +28,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 class VoiceCommandProcessor(
     private val context: Context,
     private val aiService: EnhancedAIService,
-    private val aiToolHandler: AIToolHandler,
     private val coroutineScope: CoroutineScope,
     private val chatHistory: Flow<List<Pair<String, String>>>
 ) {
@@ -37,6 +37,9 @@ class VoiceCommandProcessor(
     
     // 预定义命令列表
     private val predefinedCommands = mutableListOf<VoiceCommand>()
+
+    // 系统操作工具
+    private val systemOperationTools = ToolGetter.getSystemOperationTools(context)
     
     init {
         setupPredefinedCommands()
@@ -60,11 +63,22 @@ class VoiceCommandProcessor(
             VoiceCommand(
                 pattern = "(打开|启动)相机",
                 action = VoiceActionType.OPEN_APP,
-                parameters = mapOf("appName" to "相机", "packageName" to "com.android.camera"),
+                parameters = mapOf("appName" to "相机",
+                    "packageName" to "com.google.android.GoogleCamera"),  // 这里先拿Pixel测一下
                 confirmationRequired = false
             )
         )
-        
+
+        predefinedCommands.add(
+            VoiceCommand(
+                pattern = "(打开|启动)Spotify",
+                action = VoiceActionType.OPEN_APP,
+                parameters = mapOf("appName" to "相机",
+                    "packageName" to "com.spotify.music"),
+                confirmationRequired = false
+            )
+        )
+
         // 可以根据需要添加更多预定义命令
     }
     
@@ -88,15 +102,11 @@ class VoiceCommandProcessor(
         val directCommand = findMatchingPredefinedCommand(text)
         if (directCommand != null) {
             // 发出命令开始事件
-            coroutineScope.launch {
-                _commandEvents.emit(CommandEvent.CommandDetected(directCommand))
-            }
+            _commandEvents.emit(CommandEvent.CommandDetected(directCommand))
             
             // 如果需要确认且不是直接命令模式
             if (directCommand.confirmationRequired && !isDirectCommand) {
-                coroutineScope.launch {
-                    _commandEvents.emit(CommandEvent.ConfirmationNeeded(directCommand))
-                }
+                _commandEvents.emit(CommandEvent.ConfirmationNeeded(directCommand))
                 return CommandProcessResult(
                     wasCommand = true,
                     commandExecuted = false,
@@ -116,9 +126,9 @@ class VoiceCommandProcessor(
         }
         
         // 如果不是预定义命令，交给AI处理
-        if (!isDirectCommand) {
-            return processWithAI(text)
-        }
+        // if (!isDirectCommand) {
+        //     return processWithAI(text)
+        // }
         
         return CommandProcessResult(
             wasCommand = false,
@@ -177,6 +187,7 @@ class VoiceCommandProcessor(
         try {
             val isConversationActive = AtomicBoolean(true)
             var toolExecuted = false
+            var cacheText = ""
 
             // 将文本发送给AI服务
             aiService.sendMessage(
@@ -194,6 +205,8 @@ class VoiceCommandProcessor(
                     if (content.contains("\"tool\"") || content.contains("正在执行")) {
                         toolExecuted = true
                     }
+
+                    cacheText = content
                 },
                 chatHistory = chatHistory.first(),
                 onComplete = {
@@ -204,6 +217,8 @@ class VoiceCommandProcessor(
                     }
                 },
             )
+
+            Log.e(TAG, "AI response: $cacheText")
             
             return@withContext CommandProcessResult(
                 wasCommand = toolExecuted,
@@ -266,17 +281,20 @@ class VoiceCommandProcessor(
                     // 使用工具处理器打开应用
                     val packageName = command.parameters["packageName"] as? String
                     if (packageName != null) {
+                        // 获取AIToolHandler实例
+                        val toolHandler = AIToolHandler.getInstance(context)
+
                         // 创建AITool实例
                         val aiTool = AITool(
-                            name = "openApp",
+                            name = "startApp",
                             description = "打开指定的应用程序",
                             parameters = listOf(
-                                ToolParameter("packageName", packageName)
+                                ToolParameter("package_name", packageName)
                             )
                         )
                         
                         // 检查权限
-                        val (hasPermission, errorResult) = checkToolPermission(aiToolHandler, aiTool)
+                        val (hasPermission, errorResult) = checkToolPermission(toolHandler, aiTool)
                         if (!hasPermission) {
                             coroutineScope.launch {
                                 _commandEvents.emit(CommandEvent.Error(errorResult?.error ?: "权限被拒绝"))
@@ -286,7 +304,7 @@ class VoiceCommandProcessor(
                         }
                         
                         // 执行工具
-                        val result = aiToolHandler.executeTool(aiTool)
+                        val result = systemOperationTools.startApp(aiTool)
                         coroutineScope.launch {
                             _commandEvents.emit(CommandEvent.CommandCompleted(command, result.success))
                         }
@@ -295,6 +313,7 @@ class VoiceCommandProcessor(
                 }
                 
                 // 添加更多命令处理逻辑
+                //     val result = toolHandler.executeTool(aiTool)
                 
                 else -> {
                     Log.w(TAG, "Unknown command action: ${command.action}")
