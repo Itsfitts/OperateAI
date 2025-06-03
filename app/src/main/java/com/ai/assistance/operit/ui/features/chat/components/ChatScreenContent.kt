@@ -1,6 +1,12 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
 import android.util.Log
+import android.webkit.WebView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -17,12 +23,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.ai.assistance.operit.data.model.ChatHistory
@@ -30,8 +38,10 @@ import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.PlanItem
 import com.ai.assistance.operit.data.model.ToolExecutionProgress
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
+import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import java.io.File
 
 @Composable
 fun ChatScreenContent(
@@ -76,6 +86,20 @@ fun ChatScreenContent(
     // 获取WebView状态
     val showWebView = actualViewModel.showWebView.collectAsState().value
 
+    // 导出相关状态
+    val context = LocalContext.current
+    var showExportPlatformDialog by remember { mutableStateOf(false) }
+    var showAndroidExportDialog by remember { mutableStateOf(false) }
+    var showWindowsExportDialog by remember { mutableStateOf(false) }
+    var showExportProgressDialog by remember { mutableStateOf(false) }
+    var showExportCompleteDialog by remember { mutableStateOf(false) }
+    var exportProgress by remember { mutableStateOf(0f) }
+    var exportStatus by remember { mutableStateOf("") }
+    var exportSuccess by remember { mutableStateOf(false) }
+    var exportFilePath by remember { mutableStateOf<String?>(null) }
+    var exportErrorMessage by remember { mutableStateOf<String?>(null) }
+    var webContentDir by remember { mutableStateOf<File?>(null) }
+
     Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
         // 主聊天区域（包括顶部工具栏），确保它一直可见
         Column(
@@ -112,7 +136,7 @@ fun ChatScreenContent(
                                                 if (showWebView) {
                                                     return@detectHorizontalDragGestures
                                                 }
-                                                
+
                                                 // 累加水平拖动距离
                                                 val newDrag = currentDrag + dragAmount
                                                 onCurrentDragChange(newDrag)
@@ -258,6 +282,8 @@ fun ChatScreenContent(
                         }
                     } else {
                         // 显示WebView
+                        var webView by remember { mutableStateOf<WebView?>(null) }
+
                         AndroidView(
                                 factory = { context ->
                                     android.webkit.WebView(context).apply {
@@ -275,7 +301,7 @@ fun ChatScreenContent(
 
                                         // 添加WebChromeClient以支持更现代的Web功能
                                         webChromeClient = android.webkit.WebChromeClient()
-                                        
+
                                         // 设置WebView的各种配置
                                         settings.apply {
                                             // 启用JavaScript
@@ -315,7 +341,7 @@ fun ChatScreenContent(
 
                                         // 设置初始比例 - 匹配显示宽度
                                         setInitialScale(0)
-                                        
+
                                         // 添加触摸事件监听器优化滑动体验
                                         setOnTouchListener { v, event ->
                                             // 允许WebView处理所有触摸事件
@@ -325,6 +351,9 @@ fun ChatScreenContent(
 
                                         // 加载URL
                                         loadUrl("http://localhost:8080")
+
+                                        // 保存WebView引用以便获取工作目录
+                                        webView = this
                                     }
                                 },
                                 update = { webView ->
@@ -336,6 +365,25 @@ fun ChatScreenContent(
                                 },
                                 modifier = Modifier.fillMaxSize()
                         )
+
+                        // 在WebView模式下显示导出按钮
+                        Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.BottomEnd
+                        ) {
+                            ExportButton(
+                                    onClick = {
+                                        // 存储WebView工作目录的数据，使用当前聊天ID
+                                        val workDir = getWebContentDir(context, currentChatId)
+                                        webContentDir = workDir
+                                        
+                                        // 记录日志
+                                        Log.d("ChatScreenContent", "正在导出工作区: ${workDir.absolutePath}, 聊天ID: $currentChatId")
+                                        
+                                        showExportPlatformDialog = true
+                                    }
+                            )
+                        }
                     }
 
                     // 滚动到底部按钮 - 仅在聊天区域显示时显示
@@ -387,6 +435,140 @@ fun ChatScreenContent(
                     showChatHistorySelector = showChatHistorySelector
             )
         }
+
+        // 导出平台选择对话框
+        if (showExportPlatformDialog) {
+            ExportPlatformDialog(
+                    onDismiss = { showExportPlatformDialog = false },
+                    onSelectAndroid = { showAndroidExportDialog = true },
+                    onSelectWindows = { showWindowsExportDialog = true }
+            )
+        }
+
+        // Android导出设置对话框
+        if (showAndroidExportDialog && webContentDir != null) {
+            AndroidExportDialog(
+                    workDir = webContentDir!!,
+                    onDismiss = { showAndroidExportDialog = false },
+                    onExport = { packageName, appName, iconUri ->
+                        showAndroidExportDialog = false
+                        showExportProgressDialog = true
+                        exportProgress = 0f
+                        exportStatus = "开始导出..."
+
+                        // 启动导出过程
+                        coroutineScope.launch {
+                            exportAndroidApp(
+                                    context = context,
+                                    packageName = packageName,
+                                    appName = appName,
+                                    iconUri = iconUri,
+                                    webContentDir = webContentDir!!,
+                                    onProgress = { progress, status ->
+                                        exportProgress = progress
+                                        exportStatus = status
+                                    },
+                                    onComplete = { success, filePath, errorMessage ->
+                                        showExportProgressDialog = false
+                                        exportSuccess = success
+                                        exportFilePath = filePath
+                                        exportErrorMessage = errorMessage
+                                        showExportCompleteDialog = true
+                                    }
+                            )
+                        }
+                    }
+            )
+        }
+
+        // Windows导出设置对话框
+        if (showWindowsExportDialog && webContentDir != null) {
+            WindowsExportDialog(
+                    workDir = webContentDir!!,
+                    onDismiss = { showWindowsExportDialog = false },
+                    onExport = { appName, iconUri ->
+                        showWindowsExportDialog = false
+                        showExportProgressDialog = true
+                        exportProgress = 0f
+                        exportStatus = "开始导出..."
+
+                        // 启动导出过程
+                        coroutineScope.launch {
+                            exportWindowsApp(
+                                    context = context,
+                                    appName = appName,
+                                    iconUri = iconUri,
+                                    webContentDir = webContentDir!!,
+                                    onProgress = { progress, status ->
+                                        exportProgress = progress
+                                        exportStatus = status
+                                    },
+                                    onComplete = { success, filePath, errorMessage ->
+                                        showExportProgressDialog = false
+                                        exportSuccess = success
+                                        exportFilePath = filePath
+                                        exportErrorMessage = errorMessage
+                                        showExportCompleteDialog = true
+                                    }
+                            )
+                        }
+                    }
+            )
+        }
+
+        // 导出进度对话框
+        if (showExportProgressDialog) {
+            ExportProgressDialog(
+                    progress = exportProgress,
+                    status = exportStatus,
+                    onCancel = { showExportProgressDialog = false }
+            )
+        }
+
+        // 导出完成对话框
+        if (showExportCompleteDialog) {
+            ExportCompleteDialog(
+                    success = exportSuccess,
+                    filePath = exportFilePath,
+                    errorMessage = exportErrorMessage,
+                    onDismiss = { showExportCompleteDialog = false },
+                    onOpenFile = { filePath ->
+                        try {
+                            val file = File(filePath)
+                            val fileUri = FileProvider.getUriForFile(
+                                context,
+                                context.applicationContext.packageName + ".fileprovider",
+                                file
+                            )
+                            val intent = Intent(Intent.ACTION_VIEW)
+                            intent.setDataAndType(fileUri, "application/vnd.android.package-archive")
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            context.startActivity(intent)
+                        } catch (e: ActivityNotFoundException) {
+                            Log.e("ChatScreenContent", "无法打开文件: $filePath", e)
+                        } catch (e: Exception) {
+                            Log.e("ChatScreenContent", "文件操作错误: ${e.message}", e)
+                        }
+                    }
+            )
+        }
+    }
+}
+
+@Composable
+fun ExportButton(onClick: () -> Unit) {
+    SmallFloatingActionButton(
+            onClick = onClick,
+            modifier = Modifier.padding(end = 16.dp, bottom = 16.dp),
+            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+            contentColor = MaterialTheme.colorScheme.onPrimary
+    ) {
+        Icon(
+                imageVector = Icons.Default.Upload,
+                contentDescription = "打包并导出",
+                modifier = Modifier.size(20.dp)
+        )
     }
 }
 
@@ -489,4 +671,49 @@ fun ChatHistorySelectorPanel(
             }
         }
     }
+}
+
+// 从LocalWebServer获取工作目录
+private fun getWebContentDir(context: Context, chatId: String): File {
+    // 使用LocalWebServer获取工作区路径
+    val workspacePath = LocalWebServer.ensureWorkspaceDirExists(chatId)
+    
+    // 创建并返回工作区目录
+    val webContentDir = File(workspacePath)
+    if (!webContentDir.exists()) {
+        webContentDir.mkdirs()
+        
+        // 如果工作区为空，创建一个示例HTML文件
+        val indexHtmlFile = File(webContentDir, "index.html")
+        if (!indexHtmlFile.exists()) {
+            indexHtmlFile.createNewFile()
+            indexHtmlFile.writeText(
+                """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Web Content</title>
+                    <style>
+                        body {
+                            font-family: system-ui, -apple-system, Arial, sans-serif;
+                            max-width: 800px;
+                            margin: 0 auto;
+                            padding: 20px;
+                        }
+                        h1 { color: #2c3e50; }
+                    </style>
+                </head>
+                <body>
+                    <h1>网页内容</h1>
+                    <p>这是当前工作区的网页内容。您可以将它导出为移动应用或桌面应用。</p>
+                </body>
+                </html>
+                """.trimIndent()
+            )
+        }
+    }
+    
+    return webContentDir
 }

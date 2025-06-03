@@ -5,4 +5,7 @@
     <files-path name="files" path="." />
     <external-cache-path name="external_cache" path="." />
     <external-files-path name="external_files" path="." />
+    <!-- 添加对外部存储下载目录的支持 -->
+    <external-path name="external" path="." />
+    <external-path name="downloads" path="Download" />
 </paths> 

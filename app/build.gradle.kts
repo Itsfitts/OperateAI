@@ -80,11 +80,27 @@ android {
         }
     }
 }
+
 dependencies {
     implementation(libs.androidx.ui.graphics.android)
     implementation(files("libs\\ffmpegkit.jar"))
     // Desugaring support for modern Java APIs on older Android
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    
+    // APK解析和修改库
+    implementation("com.android.tools.build:apksig:8.1.0") // APK签名工具
+    implementation("net.dongliu:apk-parser:2.6.10") // 用于解析和处理AndroidManifest.xml
+    implementation("com.github.Sable:axml:2.0.0") // 用于Android二进制XML的读写
+    
+    // ZIP处理库 - 用于APK解压和重打包
+    implementation("org.apache.commons:commons-compress:1.25.0")
+    implementation("commons-io:commons-io:2.13.0") // 添加Apache Commons IO
+    
+    // 图片处理库
+    implementation("com.github.bumptech.glide:glide:4.16.0") // 用于处理图像
+    
+    // XML处理
+    implementation("androidx.core:core-ktx:1.12.0")
     
     // libsu - root access library
     implementation("com.github.topjohnwu.libsu:core:6.0.0")
