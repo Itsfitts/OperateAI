@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.core.subpack.ApkEditor
+import com.ai.assistance.operit.core.subpack.ExeEditor
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -589,7 +590,10 @@ suspend fun exportAndroidApp(
             onProgress(0.5f, "打包网页内容...")
 
             // 创建临时目录用于存储网页文件
-            val extractedDir = File(context.cacheDir, "apk_extracted")
+            val extractedDir = apkEditor.getExtractedDir()
+            if (extractedDir == null) {
+                throw RuntimeException("APK解压目录不存在")
+            }
             val webAssetsDir = File(extractedDir, "assets/flutter_assets/assets/web_content")
             if (!webAssetsDir.exists()) {
                 webAssetsDir.mkdirs()
@@ -605,13 +609,21 @@ suspend fun exportAndroidApp(
             // 6. 准备签名文件
             onProgress(0.7f, "准备签名...")
             val keyStoreFile = createOrGetKeystore(context)
-            Log.d("ExportDialogs", "签名使用密钥库: ${keyStoreFile.absolutePath}, 大小: ${keyStoreFile.length()}")
+            Log.d(
+                    "ExportDialogs",
+                    "签名使用密钥库: ${keyStoreFile.absolutePath}, 大小: ${keyStoreFile.length()}"
+            )
 
             // 7. 设置签名信息并执行签名
             onProgress(0.8f, "签名APK...")
             // 使用下载目录下的Operit/exports子目录
-            val outputDir = File(android.os.Environment.getExternalStoragePublicDirectory(
-                    android.os.Environment.DIRECTORY_DOWNLOADS), "Operit/exports")
+            val outputDir =
+                    File(
+                            android.os.Environment.getExternalStoragePublicDirectory(
+                                    android.os.Environment.DIRECTORY_DOWNLOADS
+                            ),
+                            "Operit/exports"
+                    )
             if (!outputDir.exists()) {
                 outputDir.mkdirs()
             }
@@ -654,11 +666,9 @@ suspend fun exportWindowsApp(
         onProgress: (Float, String) -> Unit,
         onComplete: (success: Boolean, filePath: String?, errorMessage: String?) -> Unit
 ) {
-    // 这里应该是Windows应用导出的实现
-    // 为简化示例，现在只是简单的复制网页内容到一个文件夹中
     try {
         withContext(Dispatchers.IO) {
-            onProgress(0.2f, "准备导出目录...")
+            onProgress(0.1f, "准备Windows应用模板...")
 
             // 创建输出目录 - 使用下载目录下的Operit/exports子目录
             val outputDir =
@@ -672,62 +682,148 @@ suspend fun exportWindowsApp(
                 outputDir.mkdirs()
             }
 
-            val appDir = File(outputDir, "${appName}_${Date().time}")
-            if (!appDir.exists()) {
-                appDir.mkdirs()
+            // 创建临时工作目录
+            val tempDir = File(context.cacheDir, "windows_export_temp")
+            if (tempDir.exists()) {
+                tempDir.deleteRecursively()
+            }
+            tempDir.mkdirs()
+
+            // 1. 从assets复制windows.zip模板到临时目录
+            onProgress(0.2f, "复制应用模板...")
+            val templateZip = File(tempDir, "windows.zip")
+            context.assets.open("subpack/windows.zip").use { input ->
+                FileOutputStream(templateZip).use { output -> input.copyTo(output) }
             }
 
-            // 复制网页内容
-            onProgress(0.5f, "复制网页内容...")
-            copyDirectory(webContentDir, appDir)
+            // 2. 解压windows.zip
+            onProgress(0.3f, "解压应用模板...")
+            val extractedDir = File(tempDir, "extracted")
+            extractedDir.mkdirs()
 
-            onProgress(0.7f, "创建启动文件...")
+            // 解压ZIP文件
+            java.util.zip.ZipFile(templateZip).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    val entryFile = File(extractedDir, entry.name)
 
-            // 创建简单的启动HTML
-            val launcherHtml = File(appDir, "index.html")
-            if (!launcherHtml.exists()) {
-                launcherHtml.createNewFile()
-                launcherHtml.writeText(
-                        """
-                    <!DOCTYPE html>
-                    <html lang="en">
-                    <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>$appName</title>
-                    </head>
-                    <body>
-                        <script>
-                            // 重定向到实际的首页
-                            window.location.href = "./index.html";
-                        </script>
-                    </body>
-                    </html>
-                    """.trimIndent()
-                )
-            }
-
-            // 如果提供了图标，就保存图标
-            if (iconUri != null) {
-                onProgress(0.8f, "设置应用图标...")
-                context.contentResolver.openInputStream(iconUri)?.use { input ->
-                    val iconFile = File(appDir, "favicon.ico")
-                    FileOutputStream(iconFile).use { output -> input.copyTo(output) }
+                    if (entry.isDirectory) {
+                        entryFile.mkdirs()
+                    } else {
+                        entryFile.parentFile?.mkdirs()
+                        zip.getInputStream(entry).use { input ->
+                            FileOutputStream(entryFile).use { output -> input.copyTo(output) }
+                        }
+                    }
                 }
             }
 
-            // 创建简单的ZIP文件作为输出
-            onProgress(0.9f, "打包应用...")
-            val outputZip = File(outputDir, "${appName}_${Date().time}.zip")
+            // 3. 如果提供了图标，修改assistance_subpack.exe的图标
+            if (iconUri != null) {
+                onProgress(0.4f, "更换应用图标...")
+                val mainExe = File(extractedDir, "assistance_subpack.exe")
+                if (mainExe.exists()) {
+                    try {
+                        val exeEditor = ExeEditor.fromFile(context, mainExe)
+                        context.contentResolver.openInputStream(iconUri)?.use { input ->
+                            exeEditor.changeIcon(input).setOutput(mainExe).process()
+                        }
+                        Log.d("ExportDialogs", "已更换Windows应用图标")
+                    } catch (e: Exception) {
+                        Log.e("ExportDialogs", "更换Windows应用图标失败", e)
+                        // 继续执行，不因图标失败而中断整个导出流程
+                    }
+                } else {
+                    Log.e("ExportDialogs", "未找到assistance_subpack.exe文件")
+                }
+            }
 
-            // 实际项目中应使用适当的ZIP库来打包
-            // 这里只是示例，没有实际实现ZIP打包
+            // 4. 复制网页内容到data\flutter_assets\assets\web_content
+            onProgress(0.5f, "复制网页内容...")
+            val webContentTarget = File(extractedDir, "data/flutter_assets/assets/web_content")
+            if (!webContentTarget.exists()) {
+                webContentTarget.mkdirs()
+            }
+
+            Log.d(
+                    "ExportDialogs",
+                    "复制网页文件到Windows应用: ${webContentDir.absolutePath} -> ${webContentTarget.absolutePath}"
+            )
+            copyDirectory(webContentDir, webContentTarget)
+
+            // 5. 创建最终输出文件名
+            val timestamp =
+                    java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                            .format(java.util.Date())
+            val safeName = appName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+            val outputZip = File(outputDir, "${safeName}_${timestamp}.zip")
+
+            // 6. 重新打包为ZIP
+            onProgress(0.8f, "打包应用...")
+
+            // 确保输出文件不存在
+            if (outputZip.exists()) {
+                outputZip.delete()
+            }
+
+            // 创建ZIP文件
+            val buffer = ByteArray(1024)
+            java.util.zip.ZipOutputStream(FileOutputStream(outputZip)).use { zipOut ->
+                // 添加文件到ZIP
+                addDirToZip(extractedDir, extractedDir, zipOut, buffer)
+            }
+
+            // 7. 清理临时文件
+            onProgress(0.9f, "清理临时文件...")
+            tempDir.deleteRecursively()
 
             onProgress(1.0f, "导出完成!")
-            onComplete(true, appDir.absolutePath, null)
+            onComplete(true, outputZip.absolutePath, null)
         }
     } catch (e: Exception) {
+        Log.e("ExportDialogs", "Windows应用导出失败", e)
         onComplete(false, null, "导出失败: ${e.message}")
+    }
+}
+
+/** 递归添加目录到ZIP文件 */
+private fun addDirToZip(
+        rootDir: File,
+        currentDir: File,
+        zipOut: java.util.zip.ZipOutputStream,
+        buffer: ByteArray
+) {
+    currentDir.listFiles()?.forEach { file ->
+        val relativePath =
+                file.absolutePath.substring(rootDir.absolutePath.length + 1).replace("\\", "/")
+
+        if (file.isDirectory) {
+            if (file.listFiles()?.isNotEmpty() == true) {
+                addDirToZip(rootDir, file, zipOut, buffer)
+            } else {
+                val entry = java.util.zip.ZipEntry("$relativePath/")
+                zipOut.putNextEntry(entry)
+                zipOut.closeEntry()
+            }
+        } else {
+            try {
+                val entry = java.util.zip.ZipEntry(relativePath)
+                zipOut.putNextEntry(entry)
+
+                FileInputStream(file).use { input ->
+                    var len: Int
+                    while (input.read(buffer).also { len = it } > 0) {
+                        zipOut.write(buffer, 0, len)
+                    }
+                }
+
+                zipOut.closeEntry()
+                Log.d("ExportDialogs", "已添加文件到ZIP: $relativePath")
+            } catch (e: Exception) {
+                Log.e("ExportDialogs", "添加文件到ZIP失败: $relativePath", e)
+            }
+        }
     }
 }
 
@@ -846,8 +942,27 @@ private fun copyDirectory(sourceDir: File, destDir: File) {
         if (file.isDirectory) {
             copyDirectory(file, destFile)
         } else {
-            file.inputStream().use { input ->
-                destFile.outputStream().use { output -> input.copyTo(output) }
+            try {
+                // 如果目标文件已存在，则先删除
+                if (destFile.exists()) {
+                    destFile.delete()
+                }
+
+                // 确保父目录存在
+                destFile.parentFile?.mkdirs()
+
+                // 复制文件内容
+                file.inputStream().use { input ->
+                    FileOutputStream(destFile).use { output -> input.copyTo(output) }
+                }
+
+                Log.d("ExportDialogs", "成功复制文件: ${file.absolutePath} -> ${destFile.absolutePath}")
+            } catch (e: Exception) {
+                Log.e(
+                        "ExportDialogs",
+                        "复制文件失败: ${file.absolutePath} -> ${destFile.absolutePath}",
+                        e
+                )
             }
         }
     }

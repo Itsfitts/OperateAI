@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import com.android.apksig.ApkSigner
+import dev.rushii.arsc.*
 import java.io.*
 import java.security.KeyStore
 import java.security.PrivateKey
@@ -136,14 +137,15 @@ class ApkReverseEngineer(private val context: Context) {
             reader.accept(axml)
 
             // 查找manifest元素并修改package属性
+            var oldPackageName = ""
             var packageFound = false
             for (node in axml.firsts) {
                 if (node.name == "manifest") {
                     // 遍历属性找到package
                     for (attr in node.attrs) {
                         if (attr.name == "package") {
-                            val oldPackage = attr.value as String
-                            Log.d(TAG, "找到原始包名: $oldPackage, 将替换为: $newPackageName")
+                            oldPackageName = attr.value as String
+                            Log.d(TAG, "找到原始包名: $oldPackageName, 将替换为: $newPackageName")
                             // 修改包名
                             attr.value = newPackageName
                             packageFound = true
@@ -166,10 +168,14 @@ class ApkReverseEngineer(private val context: Context) {
                 }
             }
 
-            if (!packageFound) {
+            if (!packageFound || oldPackageName.isEmpty()) {
                 Log.e(TAG, "未在AndroidManifest.xml中找到manifest元素或package属性")
                 return false
             }
+
+            // 遍历所有节点并替换引用旧包名的属性
+            // 除了 oldPackageName.MainActivity 之外的所有引用
+            replacePackageReferences(axml, oldPackageName, newPackageName)
 
             // 创建AXML写入器生成修改后的二进制文件
             val writer = AxmlWriter()
@@ -184,11 +190,58 @@ class ApkReverseEngineer(private val context: Context) {
             // 写入修改后的文件
             FileOutputStream(manifestFile).use { it.write(modifiedBytes) }
 
-            Log.d(TAG, "成功修改AndroidManifest.xml中的包名")
+            Log.d(TAG, "成功修改AndroidManifest.xml中的包名和相关引用")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "修改包名时发生异常", e)
             return false
+        }
+    }
+
+    /**
+     * 替换AXML中所有引用旧包名的属性
+     * @param axml AXML数据结构
+     * @param oldPackageName 旧包名
+     * @param newPackageName 新包名
+     */
+    private fun replacePackageReferences(
+            axml: Axml,
+            oldPackageName: String,
+            newPackageName: String
+    ) {
+        // 递归处理所有节点
+        fun processNode(node: Axml.Node) {
+            // 处理当前节点的属性
+            for (attr in node.attrs) {
+                if (attr.value is String) {
+                    val strValue = attr.value as String
+
+                    // 特殊情况：保留对MainActivity的引用不变
+                    if (strValue == "$oldPackageName.MainActivity" ||
+                                    strValue.endsWith(".$oldPackageName.MainActivity")
+                    ) {
+                        Log.d(TAG, "保留MainActivity引用不变: $strValue")
+                        continue
+                    }
+
+                    // 替换所有其他引用旧包名的情况
+                    if (strValue.contains(oldPackageName)) {
+                        val newValue = strValue.replace(oldPackageName, newPackageName)
+                        Log.d(TAG, "替换包名引用: $strValue -> $newValue")
+                        attr.value = newValue
+                    }
+                }
+            }
+
+            // 递归处理子节点
+            for (childNode in node.children) {
+                processNode(childNode)
+            }
+        }
+
+        // 处理所有顶级节点
+        for (node in axml.firsts) {
+            processNode(node)
         }
     }
 
@@ -358,58 +411,101 @@ class ApkReverseEngineer(private val context: Context) {
      */
     fun changeAppIcon(extractedDir: File, newIconBitmap: Bitmap): Boolean {
         try {
+            Log.d(TAG, "开始更换应用图标，提供的图标尺寸: ${newIconBitmap.width}x${newIconBitmap.height}")
             val resDir = File(extractedDir, "res")
-            val iconDirs =
-                    resDir.listFiles { file ->
-                        file.isDirectory &&
-                                (file.name.startsWith("drawable") || file.name.startsWith("mipmap"))
-                    }
-                            ?: return false
-
+            if (!resDir.exists()) {
+                Log.e(TAG, "res目录不存在: ${resDir.absolutePath}")
+                return false
+            }
+            
+            // 直接替换已知的图标文件 - 这些是混淆后的短名称图标
+            val knownIconFiles = listOf(
+                "yn.png", 
+                "N3.png", 
+                "9w.png", 
+                "FS.png", 
+                "RJ.png",
+                "o-.png"
+            ).map { File(resDir, it) }
+            
             var success = false
-
-            // 遍历所有drawable和mipmap目录
-            for (dir in iconDirs) {
-                // 查找启动器图标文件
-                val iconFiles =
-                        dir.listFiles { file ->
-                            file.name.contains("ic_launcher") &&
-                                    (file.extension == "png" || file.extension == "webp")
+            var replacedCount = 0
+            
+            // 替换已知的图标文件
+            for (iconFile in knownIconFiles) {
+                if (iconFile.exists()) {
+                    try {
+                        Log.d(TAG, "找到已知图标文件: ${iconFile.absolutePath}, 大小: ${iconFile.length()}字节")
+                        
+                        // 根据文件大小确定合适的输出尺寸
+                        val size = when {
+                            iconFile.length() > 40000 -> 192 // 大文件使用更高分辨率
+                            iconFile.length() > 20000 -> 144
+                            iconFile.length() > 10000 -> 96
+                            iconFile.length() > 5000 -> 72
+                            else -> 48
                         }
-                                ?: continue
-
-                // 替换每个找到的图标文件
-                for (iconFile in iconFiles) {
-                    // 根据目录名调整图标大小
-                    val scaledIcon =
-                            when {
-                                dir.name.contains("xxxhdpi") -> scaleBitmap(newIconBitmap, 192)
-                                dir.name.contains("xxhdpi") -> scaleBitmap(newIconBitmap, 144)
-                                dir.name.contains("xhdpi") -> scaleBitmap(newIconBitmap, 96)
-                                dir.name.contains("hdpi") -> scaleBitmap(newIconBitmap, 72)
-                                dir.name.contains("mdpi") -> scaleBitmap(newIconBitmap, 48)
-                                else -> newIconBitmap
+                        
+                        // 缩放新图标
+                        val scaledIcon = scaleBitmap(newIconBitmap, size)
+                        
+                        // 保存到文件
+                        FileOutputStream(iconFile).use { output ->
+                            val format = when (iconFile.extension.lowercase()) {
+                                "webp" -> Bitmap.CompressFormat.WEBP
+                                "jpg", "jpeg" -> Bitmap.CompressFormat.JPEG
+                                else -> Bitmap.CompressFormat.PNG
                             }
-
-                    // 保存到文件
-                    FileOutputStream(iconFile).use { output ->
-                        val format =
-                                if (iconFile.extension == "webp") Bitmap.CompressFormat.WEBP
-                                else Bitmap.CompressFormat.PNG
-                        scaledIcon.compress(format, 100, output)
+                            scaledIcon.compress(format, 100, output)
+                        }
+                        
+                        replacedCount++
+                        success = true
+                        Log.d(TAG, "成功替换图标: ${iconFile.absolutePath}")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "替换图标文件失败: ${iconFile.absolutePath}, 错误: ${e.message}")
                     }
-                    success = true
-                    Log.d(TAG, "已更新图标: ${iconFile.path}")
+                } else {
+                    Log.d(TAG, "未找到已知图标文件: ${iconFile.absolutePath}")
                 }
             }
-
+            
+            Log.d(TAG, "图标替换总结: 成功替换 $replacedCount 个图标文件")
             return success
         } catch (e: Exception) {
-            Log.e(TAG, "替换应用图标失败", e)
+            Log.e(TAG, "替换应用图标失败: ${e.message}", e)
             return false
         }
     }
 
+    /**
+     * 递归收集目录中所有图片文件
+     */
+    private fun collectAllImageFiles(dir: File, result: MutableList<File>) {
+        dir.listFiles()?.forEach { file ->
+            if (file.isDirectory) {
+                collectAllImageFiles(file, result)
+            } else if (file.isFile && 
+                      (file.extension.equals("png", ignoreCase = true) || 
+                       file.extension.equals("webp", ignoreCase = true) || 
+                       file.extension.equals("jpg", ignoreCase = true))) {
+                result.add(file)
+            }
+        }
+    }
+
+    /** 根据文件路径确定图标尺寸 */
+    private fun determineIconSize(iconFile: File): Int {
+        return when {
+            iconFile.path.contains("xxxhdpi") -> 192
+            iconFile.path.contains("xxhdpi") -> 144
+            iconFile.path.contains("xhdpi") -> 96
+            iconFile.path.contains("hdpi") -> 72
+            iconFile.path.contains("mdpi") -> 48
+            else -> 96 // 默认尺寸
+        }
+    }
+    
     /** 按指定尺寸缩放位图 */
     private fun scaleBitmap(source: Bitmap, size: Int): Bitmap {
         return Bitmap.createScaledBitmap(source, size, size, true)
@@ -426,15 +522,163 @@ class ApkReverseEngineer(private val context: Context) {
             if (outputApk.exists()) outputApk.delete()
             outputApk.parentFile?.mkdirs()
 
-            ZipArchiveOutputStream(FileOutputStream(outputApk)).use { zipOut ->
+            // 创建一个临时文件用于存储未对齐的APK
+            val tempUnalignedApk =
+                    File(outputApk.parentFile, "${outputApk.nameWithoutExtension}_unaligned.apk")
+            if (tempUnalignedApk.exists()) tempUnalignedApk.delete()
+
+            // 将解压的目录内容打包成未对齐的APK
+            ZipArchiveOutputStream(FileOutputStream(tempUnalignedApk)).use { zipOut ->
                 addDirToZip(extractedDir, extractedDir, zipOut)
             }
 
-            Log.d(TAG, "APK重新打包成功: ${outputApk.absolutePath}")
+            Log.d(TAG, "APK初步打包完成，准备进行zipalign对齐: ${tempUnalignedApk.absolutePath}")
+
+            val aligned = zipalign(tempUnalignedApk, outputApk, 4)
+
+            // 删除临时未对齐APK
+            tempUnalignedApk.delete()
+
+            if (!aligned) {
+                Log.e(TAG, "APK对齐失败")
+                return false
+            }
+
+            Log.d(TAG, "APK重新打包成功并完成4字节对齐: ${outputApk.absolutePath}")
             return true
         } catch (e: Exception) {
             Log.e(TAG, "APK重新打包失败", e)
             return false
+        }
+    }
+
+    /**
+     * 对APK文件进行zipalign处理
+     * @param inputApk 输入的APK文件
+     * @param outputApk 输出的APK文件
+     * @param alignment 对齐字节数（通常为4）
+     * @return 是否对齐成功
+     */
+    fun zipalign(inputApk: File, outputApk: File, alignment: Int): Boolean {
+        try {
+            if (outputApk.exists()) outputApk.delete()
+
+            Log.d(
+                    TAG,
+                    "使用zipalign-java库进行${alignment}字节对齐: ${inputApk.absolutePath} -> ${outputApk.absolutePath}"
+            )
+
+            // 使用zipalign-java库进行对齐
+            val rafIn = RandomAccessFile(inputApk, "r")
+            val fos = FileOutputStream(outputApk)
+
+            // 对.so文件使用16KB边界对齐，其他文件使用4字节对齐
+            com.iyxan23.zipalignjava.ZipAlign.alignZip(rafIn, fos, alignment, 4 * 1024)
+
+            rafIn.close()
+            fos.close()
+
+            Log.d(TAG, "APK对齐完成")
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "zipalign处理失败", e)
+            return false
+        }
+    }
+
+    /** 递归添加目录到ZIP文件 */
+    private fun addDirToZip(rootDir: File, currentDir: File, zipOut: ZipArchiveOutputStream) {
+        currentDir.listFiles()?.forEach { file ->
+            val relativePath =
+                    file.absolutePath.substring(rootDir.absolutePath.length + 1).replace("\\", "/")
+
+            if (file.isDirectory) {
+                if (file.listFiles()?.isNotEmpty() == true) {
+                    addDirToZip(rootDir, file, zipOut)
+                } else {
+                    val entry = ZipArchiveEntry("$relativePath/")
+                    zipOut.putArchiveEntry(entry)
+                    zipOut.closeArchiveEntry()
+                }
+            } else {
+                val entry = ZipArchiveEntry(relativePath)
+
+                // 判断是否应该不压缩存储
+                val shouldStore = shouldStoreWithoutCompression(relativePath)
+                if (shouldStore) {
+                    // 设置为STORED(不压缩)模式
+                    entry.method = ZipArchiveEntry.STORED
+
+                    // STORED模式要求预先设置文件大小和CRC32校验值
+                    entry.size = file.length()
+                    entry.time = file.lastModified()
+
+                    // 计算CRC32值
+                    val crc = calculateFileCrc32(file)
+                    entry.crc = crc
+                } else {
+                    // 默认使用DEFLATED(压缩)模式
+                    entry.method = ZipArchiveEntry.DEFLATED
+                }
+
+                zipOut.putArchiveEntry(entry)
+                FileInputStream(file).use { input -> IOUtils.copy(input, zipOut) }
+                zipOut.closeArchiveEntry()
+            }
+        }
+    }
+
+    /**
+     * 判断文件是否应该不压缩存储
+     * @param filePath 文件路径
+     * @return 如果应该不压缩存储返回true，否则返回false
+     */
+    private fun shouldStoreWithoutCompression(filePath: String): Boolean {
+        // 检查文件名或扩展名
+        return when {
+            // 关键的APK文件
+            filePath.endsWith("/AndroidManifest.xml") || filePath == "AndroidManifest.xml" -> true
+            filePath.endsWith("/resources.arsc") || filePath == "resources.arsc" -> true
+            filePath.endsWith(".dex") -> true
+
+            // META-INF目录中的签名文件
+            filePath.startsWith("META-INF/") &&
+                    (filePath.endsWith(".SF") ||
+                            filePath.endsWith(".RSA") ||
+                            filePath.endsWith(".DSA") ||
+                            filePath == "META-INF/MANIFEST.MF") -> true
+
+            // 默认压缩
+            else -> false
+        }
+    }
+
+    /**
+     * 计算文件的CRC32校验值
+     * @param file 需要计算CRC32的文件
+     * @return CRC32值
+     */
+    private fun calculateFileCrc32(file: File): Long {
+        val crc = java.util.zip.CRC32()
+        try {
+            FileInputStream(file).use { input ->
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    crc.update(buffer, 0, bytesRead)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "计算CRC32失败: ${e.message}", e)
+        }
+        return crc.value
+    }
+
+    /** 清理临时文件 */
+    fun cleanup() {
+        if (tempDir.exists()) {
+            tempDir.deleteRecursively()
+            Log.d(TAG, "临时文件清理完成")
         }
     }
 
@@ -479,7 +723,7 @@ class ApkReverseEngineer(private val context: Context) {
                 FileInputStream(keyStoreFile).use { input ->
                     pkcs12KeyStore.load(input, keyStorePassword.toCharArray())
                     Log.d(TAG, "成功以PKCS12格式加载密钥库")
-                    
+
                     // 获取可用的别名
                     val aliases = pkcs12KeyStore.aliases()
                     val aliasList = mutableListOf<String>()
@@ -497,22 +741,34 @@ class ApkReverseEngineer(private val context: Context) {
                         if (!aliasList.contains(keyAlias) && aliasList.isNotEmpty()) {
                             Log.w(TAG, "指定的别名'$keyAlias'不存在，将使用可用的别名: ${aliasList[0]}")
                             val actualKeyAlias = aliasList[0]
-                            return signWithKeyStore(pkcs12KeyStore, unsignedApk, actualKeyAlias, keyPassword, outputApk)
+                            return signWithKeyStore(
+                                    pkcs12KeyStore,
+                                    unsignedApk,
+                                    actualKeyAlias,
+                                    keyPassword,
+                                    outputApk
+                            )
                         }
                     }
-                    
-                    return signWithKeyStore(pkcs12KeyStore, unsignedApk, keyAlias, keyPassword, outputApk)
+
+                    return signWithKeyStore(
+                            pkcs12KeyStore,
+                            unsignedApk,
+                            keyAlias,
+                            keyPassword,
+                            outputApk
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "以PKCS12格式加载密钥库失败: ${e.message}", e)
-                
+
                 // 如果PKCS12失败，尝试JKS格式
                 try {
                     val jksKeyStore = KeyStore.getInstance("JKS")
                     FileInputStream(keyStoreFile).use { input ->
                         jksKeyStore.load(input, keyStorePassword.toCharArray())
                         Log.d(TAG, "成功以JKS格式加载密钥库")
-                        
+
                         // 获取可用的别名
                         val aliases = jksKeyStore.aliases()
                         val aliasList = mutableListOf<String>()
@@ -530,11 +786,23 @@ class ApkReverseEngineer(private val context: Context) {
                             if (!aliasList.contains(keyAlias) && aliasList.isNotEmpty()) {
                                 Log.w(TAG, "指定的别名'$keyAlias'不存在，将使用可用的别名: ${aliasList[0]}")
                                 val actualKeyAlias = aliasList[0]
-                                return signWithKeyStore(jksKeyStore, unsignedApk, actualKeyAlias, keyPassword, outputApk)
+                                return signWithKeyStore(
+                                        jksKeyStore,
+                                        unsignedApk,
+                                        actualKeyAlias,
+                                        keyPassword,
+                                        outputApk
+                                )
                             }
                         }
-                        
-                        return signWithKeyStore(jksKeyStore, unsignedApk, keyAlias, keyPassword, outputApk)
+
+                        return signWithKeyStore(
+                                jksKeyStore,
+                                unsignedApk,
+                                keyAlias,
+                                keyPassword,
+                                outputApk
+                        )
                     }
                 } catch (e2: Exception) {
                     Log.e(TAG, "以JKS格式加载密钥库也失败: ${e2.message}", e2)
@@ -747,37 +1015,6 @@ class ApkReverseEngineer(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "使用调试密钥签名APK失败", e)
             return false
-        }
-    }
-
-    /** 递归添加目录到ZIP文件 */
-    private fun addDirToZip(rootDir: File, currentDir: File, zipOut: ZipArchiveOutputStream) {
-        currentDir.listFiles()?.forEach { file ->
-            val relativePath =
-                    file.absolutePath.substring(rootDir.absolutePath.length + 1).replace("\\", "/")
-
-            if (file.isDirectory) {
-                if (file.listFiles()?.isNotEmpty() == true) {
-                    addDirToZip(rootDir, file, zipOut)
-                } else {
-                    val entry = ZipArchiveEntry("$relativePath/")
-                    zipOut.putArchiveEntry(entry)
-                    zipOut.closeArchiveEntry()
-                }
-            } else {
-                val entry = ZipArchiveEntry(relativePath)
-                zipOut.putArchiveEntry(entry)
-                FileInputStream(file).use { input -> IOUtils.copy(input, zipOut) }
-                zipOut.closeArchiveEntry()
-            }
-        }
-    }
-
-    /** 清理临时文件 */
-    fun cleanup() {
-        if (tempDir.exists()) {
-            tempDir.deleteRecursively()
-            Log.d(TAG, "临时文件清理完成")
         }
     }
 }

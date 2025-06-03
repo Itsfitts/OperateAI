@@ -33,6 +33,7 @@ object SystemPromptConfig {
       - You can create HTML, CSS, JS files in this directory using the write_file tool
       - The main file should be named index.html at the root of this directory
       - When the user clicks the web button in the UI, the contents of index.html will be displayed
+      - Users can further click an export button to export the web project as APK or EXE files
       - You can create a web development environment for the user, with live preview capability
       - Use relative paths in your HTML files for resources in the workspace directory
 
@@ -201,6 +202,7 @@ object SystemPromptConfig {
         - 你可以使用write_file工具在此目录中创建HTML、CSS、JS文件
         - 主文件应命名为index.html并位于此目录的根目录
         - 当用户点击UI中的web按钮时，index.html的内容将被显示
+        - 用户可以进而点击导出按钮将web项目导出为APK和EXE文件
         - 你可以为用户创建一个web开发环境，具有实时预览功能
         - 在HTML文件中使用相对路径来引用工作区目录中的资源
         

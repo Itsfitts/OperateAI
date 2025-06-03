@@ -274,36 +274,35 @@ private constructor(
         }
 
         // 如果指定了输出路径，将签名后的文件移动到指定位置
-        val finalOutputFile = if (outputFile != null) {
-            // 如果signedOutputFile已经存在，则将其复制到指定的输出位置
-            if (signedOutputFile.exists()) {
-                // 确保目标目录存在
-                outputFile!!.parentFile?.mkdirs()
-                
-                // 如果目标文件存在，先删除
-                if (outputFile!!.exists()) {
-                    outputFile!!.delete()
-                }
-                
-                // 复制文件内容
-                signedOutputFile.inputStream().use { input ->
-                    outputFile!!.outputStream().use { output ->
-                        input.copyTo(output)
+        val finalOutputFile =
+                if (outputFile != null) {
+                    // 如果signedOutputFile已经存在，则将其复制到指定的输出位置
+                    if (signedOutputFile.exists()) {
+                        // 确保目标目录存在
+                        outputFile!!.parentFile?.mkdirs()
+
+                        // 如果目标文件存在，先删除
+                        if (outputFile!!.exists()) {
+                            outputFile!!.delete()
+                        }
+
+                        // 复制文件内容
+                        signedOutputFile.inputStream().use { input ->
+                            outputFile!!.outputStream().use { output -> input.copyTo(output) }
+                        }
+
+                        // 复制成功后删除临时文件
+                        signedOutputFile.delete()
+
+                        Log.d(TAG, "已将签名后的APK从临时文件复制到指定输出位置: ${outputFile!!.absolutePath}")
+                        outputFile!!
+                    } else {
+                        Log.e(TAG, "签名后的临时文件不存在: ${signedOutputFile.absolutePath}")
+                        signedOutputFile
                     }
+                } else {
+                    signedOutputFile
                 }
-                
-                // 复制成功后删除临时文件
-                signedOutputFile.delete()
-                
-                Log.d(TAG, "已将签名后的APK从临时文件复制到指定输出位置: ${outputFile!!.absolutePath}")
-                outputFile!!
-            } else {
-                Log.e(TAG, "签名后的临时文件不存在: ${signedOutputFile.absolutePath}")
-                signedOutputFile
-            }
-        } else {
-            signedOutputFile
-        }
 
         // 清理临时文件
         // if (unsignedApk.exists()) {
@@ -343,6 +342,14 @@ private constructor(
                 throw RuntimeException("更换应用图标失败")
             }
         }
+    }
+
+    /**
+     * 获取APK解压后的目录
+     * @return 解压目录或null（如果未解压）
+     */
+    fun getExtractedDir(): File? {
+        return extractedDir
     }
 
     /** 清理临时文件 */

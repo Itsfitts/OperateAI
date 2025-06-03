@@ -13,8 +13,8 @@ android {
         applicationId = "com.ai.assistance.operit"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.1.3"
+        versionCode = 4
+        versionName = "1.1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -91,6 +91,8 @@ dependencies {
     implementation("com.android.tools.build:apksig:8.1.0") // APK签名工具
     implementation("net.dongliu:apk-parser:2.6.10") // 用于解析和处理AndroidManifest.xml
     implementation("com.github.Sable:axml:2.0.0") // 用于Android二进制XML的读写
+    implementation("com.github.iyxan23:zipalign-java:1.2.1") // 用于处理ZIP文件对齐
+    implementation("com.github.rushiiMachine:arsc:master-SNAPSHOT") // 用于解析和处理Android资源文件
     
     // ZIP处理库 - 用于APK解压和重打包
     implementation("org.apache.commons:commons-compress:1.25.0")
