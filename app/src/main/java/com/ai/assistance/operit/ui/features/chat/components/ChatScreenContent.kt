@@ -3,10 +3,9 @@ package com.ai.assistance.operit.ui.features.chat.components
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import androidx.core.content.FileProvider
 import android.util.Log
 import android.webkit.WebView
+import android.widget.LinearLayout
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -33,15 +32,16 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.FileProvider
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.PlanItem
 import com.ai.assistance.operit.data.model.ToolExecutionProgress
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.features.chat.webview.LocalWebServer
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import java.io.File
 
 @Composable
 fun ChatScreenContent(
@@ -300,10 +300,16 @@ fun ChatScreenContent(
                                                 }
 
                                         // 添加WebChromeClient以支持更现代的Web功能
-                                        webChromeClient = android.webkit.WebChromeClient()
+                                        // webChromeClient = android.webkit.WebChromeClient()
 
                                         // 设置WebView的各种配置
                                         settings.apply {
+                                            layoutParams =
+                                                    LinearLayout.LayoutParams(
+                                                            LinearLayout.LayoutParams.MATCH_PARENT,
+                                                            LinearLayout.LayoutParams.MATCH_PARENT,
+                                                            1.0f
+                                                    )
                                             // 启用JavaScript
                                             javaScriptEnabled = true
 
@@ -311,6 +317,7 @@ fun ChatScreenContent(
                                             // 视口设置
                                             useWideViewPort = true // 启用宽视口
                                             loadWithOverviewMode = true // 使页面适应屏幕大小
+                                            isNestedScrollingEnabled = true
 
                                             // 缩放控制
                                             setSupportZoom(true) // 支持缩放
@@ -376,10 +383,13 @@ fun ChatScreenContent(
                                         // 存储WebView工作目录的数据，使用当前聊天ID
                                         val workDir = getWebContentDir(context, currentChatId)
                                         webContentDir = workDir
-                                        
+
                                         // 记录日志
-                                        Log.d("ChatScreenContent", "正在导出工作区: ${workDir.absolutePath}, 聊天ID: $currentChatId")
-                                        
+                                        Log.d(
+                                                "ChatScreenContent",
+                                                "正在导出工作区: ${workDir.absolutePath}, 聊天ID: $currentChatId"
+                                        )
+
                                         showExportPlatformDialog = true
                                     }
                             )
@@ -535,13 +545,18 @@ fun ChatScreenContent(
                     onOpenFile = { filePath ->
                         try {
                             val file = File(filePath)
-                            val fileUri = FileProvider.getUriForFile(
-                                context,
-                                context.applicationContext.packageName + ".fileprovider",
-                                file
-                            )
+                            val fileUri =
+                                    FileProvider.getUriForFile(
+                                            context,
+                                            context.applicationContext.packageName +
+                                                    ".fileprovider",
+                                            file
+                                    )
                             val intent = Intent(Intent.ACTION_VIEW)
-                            intent.setDataAndType(fileUri, "application/vnd.android.package-archive")
+                            intent.setDataAndType(
+                                    fileUri,
+                                    "application/vnd.android.package-archive"
+                            )
                             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             context.startActivity(intent)
@@ -677,18 +692,18 @@ fun ChatHistorySelectorPanel(
 private fun getWebContentDir(context: Context, chatId: String): File {
     // 使用LocalWebServer获取工作区路径
     val workspacePath = LocalWebServer.ensureWorkspaceDirExists(chatId)
-    
+
     // 创建并返回工作区目录
     val webContentDir = File(workspacePath)
     if (!webContentDir.exists()) {
         webContentDir.mkdirs()
-        
+
         // 如果工作区为空，创建一个示例HTML文件
         val indexHtmlFile = File(webContentDir, "index.html")
         if (!indexHtmlFile.exists()) {
             indexHtmlFile.createNewFile()
             indexHtmlFile.writeText(
-                """
+                    """
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -714,6 +729,6 @@ private fun getWebContentDir(context: Context, chatId: String): File {
             )
         }
     }
-    
+
     return webContentDir
 }

@@ -13,8 +13,8 @@ android {
         applicationId = "com.ai.assistance.operit"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.1.4"
+        versionCode = 6
+        versionName = "1.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -200,6 +200,10 @@ dependencies {
     // 用于向量嵌入的TF Lite (如果需要自定义嵌入)
     implementation("org.tensorflow:tensorflow-lite:2.8.0")
 
+    // BouncyCastle加密库 - 用于PKCS12密钥处理
+    implementation("org.bouncycastle:bcpkix-jdk15on:1.70")
+    implementation("org.bouncycastle:bcprov-jdk15on:1.70")
+
     // Room 数据库
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1") // Kotlin扩展和协程支持
@@ -267,4 +271,24 @@ dependencies {
     
     // NanoHTTPD for local web server
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+
+    // 添加测试依赖
+    testImplementation(libs.junit)
+    
+    // Android测试依赖
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestImplementation("androidx.test:rules:1.5.0")
+    
+    // 协程测试依赖
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    
+    // 模拟测试框架
+    testImplementation("org.mockito:mockito-core:5.2.0")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.1.0")
+    androidTestImplementation("org.mockito:mockito-android:5.2.0")
 }

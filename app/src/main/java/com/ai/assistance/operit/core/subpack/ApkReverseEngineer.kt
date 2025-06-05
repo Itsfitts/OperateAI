@@ -417,48 +417,46 @@ class ApkReverseEngineer(private val context: Context) {
                 Log.e(TAG, "res目录不存在: ${resDir.absolutePath}")
                 return false
             }
-            
+
             // 直接替换已知的图标文件 - 这些是混淆后的短名称图标
-            val knownIconFiles = listOf(
-                "yn.png", 
-                "N3.png", 
-                "9w.png", 
-                "FS.png", 
-                "RJ.png",
-                "o-.png"
-            ).map { File(resDir, it) }
-            
+            val knownIconFiles =
+                    listOf("yn.png", "N3.png", "9w.png", "FS.png", "RJ.png", "o-.png").map {
+                        File(resDir, it)
+                    }
+
             var success = false
             var replacedCount = 0
-            
+
             // 替换已知的图标文件
             for (iconFile in knownIconFiles) {
                 if (iconFile.exists()) {
                     try {
                         Log.d(TAG, "找到已知图标文件: ${iconFile.absolutePath}, 大小: ${iconFile.length()}字节")
-                        
+
                         // 根据文件大小确定合适的输出尺寸
-                        val size = when {
-                            iconFile.length() > 40000 -> 192 // 大文件使用更高分辨率
-                            iconFile.length() > 20000 -> 144
-                            iconFile.length() > 10000 -> 96
-                            iconFile.length() > 5000 -> 72
-                            else -> 48
-                        }
-                        
+                        val size =
+                                when {
+                                    iconFile.length() > 40000 -> 192 // 大文件使用更高分辨率
+                                    iconFile.length() > 20000 -> 144
+                                    iconFile.length() > 10000 -> 96
+                                    iconFile.length() > 5000 -> 72
+                                    else -> 48
+                                }
+
                         // 缩放新图标
                         val scaledIcon = scaleBitmap(newIconBitmap, size)
-                        
+
                         // 保存到文件
                         FileOutputStream(iconFile).use { output ->
-                            val format = when (iconFile.extension.lowercase()) {
-                                "webp" -> Bitmap.CompressFormat.WEBP
-                                "jpg", "jpeg" -> Bitmap.CompressFormat.JPEG
-                                else -> Bitmap.CompressFormat.PNG
-                            }
+                            val format =
+                                    when (iconFile.extension.lowercase()) {
+                                        "webp" -> Bitmap.CompressFormat.WEBP
+                                        "jpg", "jpeg" -> Bitmap.CompressFormat.JPEG
+                                        else -> Bitmap.CompressFormat.PNG
+                                    }
                             scaledIcon.compress(format, 100, output)
                         }
-                        
+
                         replacedCount++
                         success = true
                         Log.d(TAG, "成功替换图标: ${iconFile.absolutePath}")
@@ -469,7 +467,7 @@ class ApkReverseEngineer(private val context: Context) {
                     Log.d(TAG, "未找到已知图标文件: ${iconFile.absolutePath}")
                 }
             }
-            
+
             Log.d(TAG, "图标替换总结: 成功替换 $replacedCount 个图标文件")
             return success
         } catch (e: Exception) {
@@ -478,17 +476,16 @@ class ApkReverseEngineer(private val context: Context) {
         }
     }
 
-    /**
-     * 递归收集目录中所有图片文件
-     */
+    /** 递归收集目录中所有图片文件 */
     private fun collectAllImageFiles(dir: File, result: MutableList<File>) {
         dir.listFiles()?.forEach { file ->
             if (file.isDirectory) {
                 collectAllImageFiles(file, result)
-            } else if (file.isFile && 
-                      (file.extension.equals("png", ignoreCase = true) || 
-                       file.extension.equals("webp", ignoreCase = true) || 
-                       file.extension.equals("jpg", ignoreCase = true))) {
+            } else if (file.isFile &&
+                            (file.extension.equals("png", ignoreCase = true) ||
+                                    file.extension.equals("webp", ignoreCase = true) ||
+                                    file.extension.equals("jpg", ignoreCase = true))
+            ) {
                 result.add(file)
             }
         }
@@ -505,7 +502,7 @@ class ApkReverseEngineer(private val context: Context) {
             else -> 96 // 默认尺寸
         }
     }
-    
+
     /** 按指定尺寸缩放位图 */
     private fun scaleBitmap(source: Bitmap, size: Int): Bitmap {
         return Bitmap.createScaledBitmap(source, size, size, true)
@@ -690,7 +687,7 @@ class ApkReverseEngineer(private val context: Context) {
      * @param keyAlias 密钥别名
      * @param keyPassword 密钥密码
      * @param outputApk 签名后的APK文件
-     * @return 是否签名成功
+     * @return 包含签名结果和错误消息的Pair，成功时第二个值为null
      */
     fun signApk(
             unsignedApk: File,
@@ -699,16 +696,18 @@ class ApkReverseEngineer(private val context: Context) {
             keyAlias: String,
             keyPassword: String,
             outputApk: File
-    ): Boolean {
+    ): Pair<Boolean, String?> {
         try {
             if (!unsignedApk.exists()) {
-                Log.e(TAG, "未签名的APK文件不存在: ${unsignedApk.absolutePath}")
-                return false
+                val message = "未签名的APK文件不存在: ${unsignedApk.absolutePath}"
+                Log.e(TAG, message)
+                return Pair(false, message)
             }
 
             if (!keyStoreFile.exists()) {
-                Log.e(TAG, "密钥库文件不存在: ${keyStoreFile.absolutePath}")
-                return false
+                val message = "密钥库文件不存在: ${keyStoreFile.absolutePath}"
+                Log.e(TAG, message)
+                return Pair(false, message)
             }
 
             Log.d(TAG, "开始签名APK，使用密钥: ${keyStoreFile.absolutePath}, 别名: $keyAlias")
@@ -718,100 +717,111 @@ class ApkReverseEngineer(private val context: Context) {
             outputApk.parentFile?.mkdirs()
 
             // 首先尝试使用PKCS12格式加载密钥库
-            try {
-                val pkcs12KeyStore = KeyStore.getInstance("PKCS12")
-                FileInputStream(keyStoreFile).use { input ->
-                    pkcs12KeyStore.load(input, keyStorePassword.toCharArray())
-                    Log.d(TAG, "成功以PKCS12格式加载密钥库")
-
-                    // 获取可用的别名
-                    val aliases = pkcs12KeyStore.aliases()
-                    val aliasList = mutableListOf<String>()
-                    while (aliases.hasMoreElements()) {
-                        aliasList.add(aliases.nextElement())
-                    }
-
-                    if (aliasList.isEmpty()) {
-                        Log.e(TAG, "密钥库中没有任何密钥别名")
-                        return false
-                    } else {
-                        Log.d(TAG, "密钥库中的别名: ${aliasList.joinToString()}")
-
-                        // 如果指定的别名不存在，但有其他别名，使用第一个别名
-                        if (!aliasList.contains(keyAlias) && aliasList.isNotEmpty()) {
-                            Log.w(TAG, "指定的别名'$keyAlias'不存在，将使用可用的别名: ${aliasList[0]}")
-                            val actualKeyAlias = aliasList[0]
-                            return signWithKeyStore(
-                                    pkcs12KeyStore,
-                                    unsignedApk,
-                                    actualKeyAlias,
-                                    keyPassword,
-                                    outputApk
-                            )
-                        }
-                    }
-
-                    return signWithKeyStore(
-                            pkcs12KeyStore,
+            val pkcs12Result =
+                    trySignWithKeyStoreType(
                             unsignedApk,
+                            keyStoreFile,
+                            keyStorePassword,
                             keyAlias,
                             keyPassword,
-                            outputApk
+                            outputApk,
+                            "PKCS12"
                     )
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "以PKCS12格式加载密钥库失败: ${e.message}", e)
+            if (pkcs12Result.first) {
+                return Pair(true, null)
+            }
 
-                // 如果PKCS12失败，尝试JKS格式
+            // 如果PKCS12失败，尝试使用JKS格式
+            val jksResult =
+                    trySignWithKeyStoreType(
+                            unsignedApk,
+                            keyStoreFile,
+                            keyStorePassword,
+                            keyAlias,
+                            keyPassword,
+                            outputApk,
+                            "JKS"
+                    )
+            if (jksResult.first) {
+                return Pair(true, null)
+            }
+
+            val errorMessage =
+                    "使用PKCS12和JKS格式均无法加载密钥库进行签名。\nPKCS12错误: ${pkcs12Result.second}\nJKS错误: ${jksResult.second}"
+            Log.e(TAG, errorMessage)
+            return Pair(false, errorMessage)
+        } catch (e: Exception) {
+            val errorMessage = "APK签名失败: ${e.message}"
+            Log.e(TAG, errorMessage, e)
+            return Pair(false, errorMessage)
+        }
+    }
+
+    /** 尝试使用指定格式的密钥库进行签名 */
+    private fun trySignWithKeyStoreType(
+            unsignedApk: File,
+            keyStoreFile: File,
+            keyStorePassword: String,
+            keyAlias: String,
+            keyPassword: String,
+            outputApk: File,
+            keyStoreType: String
+    ): Pair<Boolean, String?> {
+        try {
+            Log.d(TAG, "尝试以$keyStoreType 格式加载密钥库")
+
+            // 使用KeyStoreHelper获取密钥库实例
+            val keyStore = KeyStoreHelper.getKeyStoreInstance(keyStoreType)
+            if (keyStore == null) {
+                val errorMessage = "获取$keyStoreType 密钥库实例失败"
+                Log.e(TAG, errorMessage)
+                return Pair(false, errorMessage)
+            }
+
+            FileInputStream(keyStoreFile).use { input ->
                 try {
-                    val jksKeyStore = KeyStore.getInstance("JKS")
-                    FileInputStream(keyStoreFile).use { input ->
-                        jksKeyStore.load(input, keyStorePassword.toCharArray())
-                        Log.d(TAG, "成功以JKS格式加载密钥库")
+                    keyStore.load(input, keyStorePassword.toCharArray())
+                    Log.d(TAG, "成功以$keyStoreType 格式加载密钥库")
+                } catch (e: Exception) {
+                    val errorMessage = "加载$keyStoreType 密钥库失败: ${e.message}"
+                    Log.e(TAG, errorMessage)
+                    return Pair(false, errorMessage)
+                }
 
-                        // 获取可用的别名
-                        val aliases = jksKeyStore.aliases()
-                        val aliasList = mutableListOf<String>()
-                        while (aliases.hasMoreElements()) {
-                            aliasList.add(aliases.nextElement())
-                        }
+                // 获取可用的别名
+                val aliases = keyStore.aliases()
+                val aliasList = mutableListOf<String>()
+                while (aliases.hasMoreElements()) {
+                    aliasList.add(aliases.nextElement())
+                }
 
-                        if (aliasList.isEmpty()) {
-                            Log.e(TAG, "密钥库中没有任何密钥别名")
-                            return false
-                        } else {
-                            Log.d(TAG, "密钥库中的别名: ${aliasList.joinToString()}")
+                if (aliasList.isEmpty()) {
+                    val errorMessage = "$keyStoreType 密钥库中没有任何密钥别名"
+                    Log.e(TAG, errorMessage)
+                    return Pair(false, errorMessage)
+                } else {
+                    Log.d(TAG, "$keyStoreType 密钥库中的别名: ${aliasList.joinToString()}")
 
-                            // 如果指定的别名不存在，但有其他别名，使用第一个别名
-                            if (!aliasList.contains(keyAlias) && aliasList.isNotEmpty()) {
-                                Log.w(TAG, "指定的别名'$keyAlias'不存在，将使用可用的别名: ${aliasList[0]}")
-                                val actualKeyAlias = aliasList[0]
-                                return signWithKeyStore(
-                                        jksKeyStore,
-                                        unsignedApk,
-                                        actualKeyAlias,
-                                        keyPassword,
-                                        outputApk
-                                )
-                            }
-                        }
-
+                    // 如果指定的别名不存在，但有其他别名，使用第一个别名
+                    if (!aliasList.contains(keyAlias) && aliasList.isNotEmpty()) {
+                        Log.w(TAG, "指定的别名'$keyAlias'不存在，将使用可用的别名: ${aliasList[0]}")
+                        val actualKeyAlias = aliasList[0]
                         return signWithKeyStore(
-                                jksKeyStore,
+                                keyStore,
                                 unsignedApk,
-                                keyAlias,
+                                actualKeyAlias,
                                 keyPassword,
                                 outputApk
                         )
                     }
-                } catch (e2: Exception) {
-                    Log.e(TAG, "以JKS格式加载密钥库也失败: ${e2.message}", e2)
-                    return false
                 }
+
+                return signWithKeyStore(keyStore, unsignedApk, keyAlias, keyPassword, outputApk)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "APK签名失败: ${e.message}", e)
-            return false
+            val errorMessage = "以$keyStoreType 格式加载密钥库失败: ${e.message}"
+            Log.e(TAG, errorMessage, e)
+            return Pair(false, errorMessage)
         }
     }
 
@@ -822,33 +832,37 @@ class ApkReverseEngineer(private val context: Context) {
             keyAlias: String,
             keyPassword: String,
             outputApk: File
-    ): Boolean {
+    ): Pair<Boolean, String?> {
         try {
             // 获取私钥
             val key = keyStore.getKey(keyAlias, keyPassword.toCharArray())
             if (key == null) {
-                Log.e(TAG, "在密钥库中找不到别名为'$keyAlias'的密钥")
-                return false
+                val errorMessage = "在密钥库中找不到别名为'$keyAlias'的密钥"
+                Log.e(TAG, errorMessage)
+                return Pair(false, errorMessage)
             }
 
             if (key !is PrivateKey) {
-                Log.e(TAG, "找到的密钥不是私钥类型: ${key.javaClass.name}")
-                return false
+                val errorMessage = "找到的密钥不是私钥类型: ${key.javaClass.name}"
+                Log.e(TAG, errorMessage)
+                return Pair(false, errorMessage)
             }
             val privateKey = key
 
             // 获取证书链
             val certificateChain = keyStore.getCertificateChain(keyAlias)
             if (certificateChain == null || certificateChain.isEmpty()) {
-                Log.e(TAG, "无法获取别名为'$keyAlias'的证书链")
-                return false
+                val errorMessage = "无法获取别名为'$keyAlias'的证书链"
+                Log.e(TAG, errorMessage)
+                return Pair(false, errorMessage)
             }
 
             val x509CertificateChain =
                     certificateChain.map { cert ->
                         if (cert !is X509Certificate) {
-                            Log.e(TAG, "证书不是X509Certificate类型: ${cert.javaClass.name}")
-                            return false
+                            val errorMessage = "证书不是X509Certificate类型: ${cert.javaClass.name}"
+                            Log.e(TAG, errorMessage)
+                            return Pair(false, errorMessage)
                         }
                         cert as X509Certificate
                     }
@@ -866,155 +880,20 @@ class ApkReverseEngineer(private val context: Context) {
                             .setMinSdkVersion(26) // 根据项目实际最低SDK版本调整
                             .build()
 
-            apkSigner.sign()
+            try {
+                apkSigner.sign()
+            } catch (e: Exception) {
+                val errorMessage = "ApkSigner执行失败: ${e.message}"
+                Log.e(TAG, errorMessage, e)
+                return Pair(false, errorMessage)
+            }
 
             Log.d(TAG, "APK签名完成: ${outputApk.absolutePath}")
-            return true
+            return Pair(true, null)
         } catch (e: Exception) {
-            Log.e(TAG, "使用KeyStore签名APK失败: ${e.message}", e)
-            return false
-        }
-    }
-
-    /**
-     * 从assets中加载内置的签名密钥库
-     * @return 密钥库文件
-     */
-    private fun loadBuiltInKeystore(): File? {
-        try {
-            // 密钥直接存放在assets根目录
-            val assetKeystore = "app_signing.keystore"
-            val keystoreFile = File(context.filesDir, "app_signing.keystore")
-
-            // 如果文件已存在且大小合理，直接返回
-            if (keystoreFile.exists() && keystoreFile.length() > 1000) {
-                Log.d(
-                        TAG,
-                        "使用已存在的密钥库: ${keystoreFile.absolutePath}, 大小: ${keystoreFile.length()}字节"
-                )
-                return keystoreFile
-            }
-
-            Log.d(TAG, "尝试从assets加载密钥库: $assetKeystore")
-
-            // 列出assets根目录所有文件用于调试
-            try {
-                val assetFiles = context.assets.list("") ?: emptyArray()
-                Log.d(TAG, "assets目录文件列表: ${assetFiles.joinToString()}")
-            } catch (e: Exception) {
-                Log.e(TAG, "列出assets文件失败: ${e.message}", e)
-            }
-
-            // 先删除可能存在的旧文件
-            if (keystoreFile.exists()) {
-                keystoreFile.delete()
-                Log.d(TAG, "删除旧密钥库文件")
-            }
-
-            // 从assets复制密钥库文件 - 使用缓冲区读取全部内容再写入
-            try {
-                context.assets.open(assetKeystore).use { input ->
-                    val bytes = input.readBytes()
-                    Log.d(TAG, "从assets读取到字节: ${bytes.size}")
-
-                    if (bytes.size < 1000) {
-                        Log.e(TAG, "密钥库文件大小异常，可能已损坏: ${bytes.size}字节")
-                        return null
-                    }
-
-                    keystoreFile.outputStream().use { output ->
-                        output.write(bytes)
-                        output.flush()
-                    }
-                    Log.d(TAG, "成功写入密钥库: ${keystoreFile.absolutePath}, ${bytes.size}字节")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "复制密钥库文件失败: ${e.message}", e)
-                return null
-            }
-
-            if (keystoreFile.exists() && keystoreFile.length() > 1000) {
-                Log.d(
-                        TAG,
-                        "已从assets加载内置密钥库: ${keystoreFile.absolutePath}, 大小: ${keystoreFile.length()}字节"
-                )
-                return keystoreFile
-            } else {
-                Log.e(TAG, "密钥库文件创建失败或大小异常: ${keystoreFile.length()}字节")
-                return null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "加载内置密钥库失败: ${e.message}", e)
-            return null
-        }
-    }
-
-    /**
-     * 使用调试密钥签名APK（开发测试用）
-     * @param unsignedApk 未签名的APK文件
-     * @param outputApk 签名后的APK文件
-     * @return 是否签名成功
-     */
-    fun signApkWithDebugKey(unsignedApk: File, outputApk: File): Boolean {
-        try {
-            // 首先尝试加载内置的密钥库
-            val builtInKeystore = loadBuiltInKeystore()
-            if (builtInKeystore != null) {
-                Log.d(TAG, "找到内置密钥库，使用密钥签名")
-                // 使用固定的密钥别名和密码
-                return signApk(
-                        unsignedApk,
-                        builtInKeystore,
-                        "android", // 密钥库密码
-                        "androidkey", // 密钥别名
-                        "android", // 密钥密码
-                        outputApk
-                )
-            }
-
-            // 作为备用，尝试使用Android默认调试密钥库
-            val userHome = System.getProperty("user.home")
-            val debugKeystore = File(userHome, ".android/debug.keystore")
-
-            if (!debugKeystore.exists()) {
-                Log.e(TAG, "未找到调试密钥库: ${debugKeystore.absolutePath}")
-                // 尝试查找其他可能的位置
-                val altLocations =
-                        arrayOf(
-                                File(context.filesDir.parent ?: "", "debug.keystore"),
-                                File(context.cacheDir, "debug.keystore"),
-                                File("/data/local/debug.keystore")
-                        )
-
-                val existingKeystore = altLocations.firstOrNull { it.exists() }
-                if (existingKeystore != null) {
-                    Log.d(TAG, "在替代位置找到调试密钥库: ${existingKeystore.absolutePath}")
-                    return signApk(
-                            unsignedApk,
-                            existingKeystore,
-                            "android", // 默认密码
-                            "androiddebugkey", // 默认别名
-                            "android", // 默认密钥密码
-                            outputApk
-                    )
-                }
-
-                Log.e(TAG, "找不到任何可用的密钥库，无法签名APK")
-                return false
-            }
-
-            // 使用默认调试密钥签名
-            return signApk(
-                    unsignedApk,
-                    debugKeystore,
-                    "android", // 默认密码
-                    "androiddebugkey", // 默认别名
-                    "android", // 默认密钥密码
-                    outputApk
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "使用调试密钥签名APK失败", e)
-            return false
+            val errorMessage = "使用KeyStore签名APK失败: ${e.message}"
+            Log.e(TAG, errorMessage, e)
+            return Pair(false, errorMessage)
         }
     }
 }

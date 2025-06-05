@@ -48,17 +48,20 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
         }
 
         return try {
-            // 首先尝试使用基本的ls命令
-            Log.d(TAG, "Trying basic ls command for path: $path")
-            val basicResult = AndroidShellExecutor.executeShellCommand("ls \"$path\"")
+            // 确保目录路径末尾有斜杠
+            val normalizedPath = if (path.endsWith("/")) path else "$path/"
 
-            if (basicResult.success) {
-                Log.d(TAG, "Basic ls command output: ${basicResult.stdout}")
+            // 使用ls -la命令获取详细的文件列表
+            Log.d(TAG, "Using ls -la command for path: $normalizedPath")
+            val listResult = AndroidShellExecutor.executeShellCommand("ls -la \"$normalizedPath\"")
 
-                // 解析基本ls命令输出
-                val entries = parseBasicDirectoryListing(basicResult.stdout, path)
+            if (listResult.success) {
+                Log.d(TAG, "ls -la command output: ${listResult.stdout}")
 
-                Log.d(TAG, "Parsed ${entries.size} entries from basic ls output")
+                // 解析ls -la命令输出
+                val entries = parseDetailedDirectoryListing(listResult.stdout, normalizedPath)
+
+                Log.d(TAG, "Parsed ${entries.size} entries from ls -la output")
 
                 return ToolResult(
                         toolName = tool.name,
@@ -67,39 +70,14 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
                         error = ""
                 )
             } else {
-                Log.w(TAG, "Basic ls command failed: ${basicResult.stderr}")
+                Log.w(TAG, "ls -la command failed: ${listResult.stderr}")
 
-                // 如果基本ls命令失败，尝试使用find命令
-                Log.d(TAG, "Trying find command for path: $path")
-                val findResult =
-                        AndroidShellExecutor.executeShellCommand(
-                                "find \"$path\" -maxdepth 1 -mindepth 1 -printf \"%y|%s|%T@|%f\\n\""
-                        )
-
-                if (findResult.success) {
-                    Log.d(TAG, "Find command output: ${findResult.stdout}")
-
-                    // 解析find命令输出
-                    val entries = parseFindCommandOutput(findResult.stdout, path)
-
-                    Log.d(TAG, "Parsed ${entries.size} entries from find output")
-
-                    return ToolResult(
-                            toolName = tool.name,
-                            success = true,
-                            result = DirectoryListingData(path, entries),
-                            error = ""
-                    )
-                } else {
-                    Log.e(TAG, "Find command failed: ${findResult.stderr}")
-
-                    return ToolResult(
-                            toolName = tool.name,
-                            success = false,
-                            result = StringResultData(""),
-                            error = "Failed to list directory: ${findResult.stderr}"
-                    )
-                }
+                return ToolResult(
+                        toolName = tool.name,
+                        success = false,
+                        result = StringResultData(""),
+                        error = "Failed to list directory: ${listResult.stderr}"
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error listing directory", e)
@@ -112,106 +90,72 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
         }
     }
 
-    /** Parse the output of the find command into structured data */
-    protected fun parseFindCommandOutput(
+    /** Parse the output of the ls -la command into structured data */
+    protected fun parseDetailedDirectoryListing(
             output: String,
             path: String
     ): List<DirectoryListingData.FileEntry> {
         val lines = output.trim().split("\n")
         val entries = mutableListOf<DirectoryListingData.FileEntry>()
 
-        for (line in lines) {
+        Log.d(TAG, "Parsing ${lines.size} lines from ls -la output")
+
+        // 跳过第一行总计行
+        val startIndex = if (lines.isNotEmpty() && lines[0].startsWith("total")) 1 else 0
+
+        // 日期格式化器，用于解析日期时间字符串
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+
+        for (i in startIndex until lines.size) {
             try {
+                val line = lines[i]
                 if (line.isBlank()) continue
 
-                // find命令输出格式: f|1234|1621234567|filename
-                // 其中f表示文件，d表示目录，1234是大小，1621234567是时间戳，filename是文件名
-                val parts = line.split("|")
+                // 打印每一行以便调试
+                Log.d(TAG, "Parsing line: $line")
 
-                if (parts.size >= 4) {
-                    val isDirectory = parts[0] == "d"
-                    val size = parts[1].toLongOrNull() ?: 0
-                    val timestamp = parts[2].toLongOrNull() ?: 0
-                    val name = parts[3]
+                // Android上ls -la输出格式: crwxrw--- 2 u0_a425 media_rw 4056 2025-03-14 06:04 Android
+                // 符号链接格式: lrwxrwxrwx 1 root root 12 2025-03-14 06:04 filename -> /path/to/target
+
+                // 使用正则表达式解析Android上的ls -la输出
+                val androidRegex =
+                        """^(\S+)\s+(\d+)\s+(\S+\s*\S*)\s+(\S+)\s+(\d+)\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+(.+)$""".toRegex()
+                val androidMatch = androidRegex.find(line)
+
+                if (androidMatch != null) {
+                    // 特定于Android的格式解析
+                    val permissions = androidMatch.groupValues[1]
+                    val size = androidMatch.groupValues[5].toLongOrNull() ?: 0
+                    val date = androidMatch.groupValues[6]
+                    val time = androidMatch.groupValues[7]
+                    var name = androidMatch.groupValues[8]
+                    val isDirectory = permissions.startsWith("d") || permissions.startsWith("c")
+                    val isSymlink = permissions.startsWith("l")
+
+                    // 处理符号链接格式 "name -> target"
+                    if (isSymlink && name.contains(" -> ")) {
+                        name = name.substringBefore(" -> ")
+                        Log.d(TAG, "Found symlink: $name")
+                    }
 
                     // 跳过 . 和 .. 条目
-                    if (name != "." && name != "..") {
-                        // 将时间戳转换为可读格式
-                        val date = java.util.Date(timestamp * 1000)
-                        val dateFormat =
-                                java.text.SimpleDateFormat("MMM dd HH:mm", java.util.Locale.US)
-                        val lastModified = dateFormat.format(date)
+                    if (name == "." || name == "..") continue
 
-                        entries.add(
-                                DirectoryListingData.FileEntry(
-                                        name = name,
-                                        isDirectory = isDirectory,
-                                        size = size,
-                                        permissions = "rwxr-xr-x", // 默认权限
-                                        lastModified = lastModified
-                                )
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error parsing find command output: $line", e)
-                // 跳过这一行但继续处理其他行
-            }
-        }
+                    // 将日期和时间转换为时间戳
+                    val dateTimeStr = "$date $time"
+                    val timestamp =
+                            try {
+                                val parsedDate = dateFormat.parse(dateTimeStr)
+                                parsedDate?.time?.toString() ?: "0"
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error parsing date: $dateTimeStr", e)
+                                "0" // 解析失败时使用默认时间戳
+                            }
 
-        return entries
-    }
-
-    /** Parse the output of the basic ls command into structured data */
-    protected suspend fun parseBasicDirectoryListing(
-            output: String,
-            path: String
-    ): List<DirectoryListingData.FileEntry> {
-        val lines = output.trim().split("\n")
-        val entries = mutableListOf<DirectoryListingData.FileEntry>()
-
-        Log.d(TAG, "Parsing ${lines.size} lines from basic ls output")
-
-        // 为了提高性能，一次性获取所有目录
-        val dirCheckCommand = StringBuilder("for f in ")
-        lines.filter { it.isNotBlank() }.forEach { dirCheckCommand.append("\"$it\" ") }
-        dirCheckCommand.append("; do if [ -d \"$path/\$f\" ]; then echo \"\$f\"; fi; done")
-
-        // 执行命令获取哪些是目录
-        val dirResult =
-                try {
-                    AndroidShellExecutor.executeShellCommand(dirCheckCommand.toString())
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error checking directories", e)
-                    null
-                }
-
-        // 解析目录列表
-        val dirNames =
-                if (dirResult?.success == true && dirResult.stdout.isNotBlank()) {
-                    dirResult.stdout.trim().split("\n").toSet()
-                } else {
-                    emptySet()
-                }
-
-        Log.d(TAG, "Found ${dirNames.size} directories")
-
-        for (line in lines) {
-            try {
-                if (line.isBlank()) continue
-
-                // 基本ls命令只输出文件名
-                val name = line.trim()
-
-                // 跳过 . 和 .. 条目
-                if (name != "." && name != "..") {
-                    // 简化实现：使用之前批量获取的目录列表判断是否为目录
-                    val isDirectory = dirNames.contains(name)
-
-                    // 使用默认值替代实际查询
-                    val size = 0L // 默认大小为0
-                    val permissions = "rwxr-xr-x" // 默认权限
-                    val lastModified = "Jan 01 00:00" // 默认时间
+                    Log.d(
+                            TAG,
+                            "Successfully parsed $name with date $dateTimeStr -> timestamp $timestamp"
+                    )
 
                     entries.add(
                             DirectoryListingData.FileEntry(
@@ -219,12 +163,135 @@ open class DebuggerFileSystemTools(context: Context) : AccessibilityFileSystemTo
                                     isDirectory = isDirectory,
                                     size = size,
                                     permissions = permissions,
-                                    lastModified = lastModified
+                                    lastModified = timestamp // 使用时间戳字符串
+                            )
+                    )
+                    continue
+                }
+
+                // 如果Android特定格式不匹配，尝试通用格式
+                val genericRegex =
+                        """^([\-ld][\w-]{9})\s+(\d+)\s+(\w+)\s+(\w+)\s+(\d+)\s+([\w\d\s\-:\.]+)\s+(.+)$""".toRegex()
+                val match = genericRegex.find(line)
+
+                if (match != null) {
+                    val permissions = match.groupValues[1]
+                    val size = match.groupValues[5].toLongOrNull() ?: 0
+                    val dateTimeStr = match.groupValues[6].trim()
+                    var name = match.groupValues[7]
+                    val isDirectory = permissions.startsWith("d")
+                    val isSymlink = permissions.startsWith("l")
+
+                    // 处理符号链接格式 "name -> target"
+                    if (isSymlink && name.contains(" -> ")) {
+                        name = name.substringBefore(" -> ")
+                        Log.d(TAG, "Found symlink (generic): $name")
+                    }
+
+                    // 跳过 . 和 .. 条目
+                    if (name == "." || name == "..") continue
+
+                    // 尝试解析通用格式的日期时间
+                    val timestamp =
+                            try {
+                                if (dateTimeStr.matches(
+                                                """^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}$""".toRegex()
+                                        )
+                                ) {
+                                    val parsedDate = dateFormat.parse(dateTimeStr)
+                                    parsedDate?.time?.toString() ?: "0"
+                                } else {
+                                    // 如果不是YYYY-MM-DD HH:MM格式，返回当前时间
+                                    System.currentTimeMillis().toString()
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error parsing generic date: $dateTimeStr", e)
+                                "0"
+                            }
+
+                    entries.add(
+                            DirectoryListingData.FileEntry(
+                                    name = name,
+                                    isDirectory = isDirectory,
+                                    size = size,
+                                    permissions = permissions,
+                                    lastModified = timestamp
+                            )
+                    )
+                } else {
+                    // 如果标准正则表达式也不匹配，使用更宽松的解析方法
+                    // 权限字段始终是10个字符
+                    if (line.length < 10) continue
+
+                    val permissions = line.substring(0, 10).trim()
+                    val isDirectory = permissions.startsWith("d") || permissions.startsWith("c")
+
+                    // 解析剩余部分
+                    val parts = line.substring(10).trim().split("\\s+".toRegex())
+
+                    if (parts.size < 6) {
+                        Log.w(TAG, "Invalid ls -la format: $line")
+                        continue
+                    }
+
+                    // 查找日期部分 - Android上通常是YYYY-MM-DD格式
+                    val dateIndex =
+                            parts.indexOfFirst { it.matches("""^\d{4}-\d{2}-\d{2}$""".toRegex()) }
+
+                    if (dateIndex < 0 || dateIndex + 1 >= parts.size) {
+                        Log.w(TAG, "Cannot find date in line: $line")
+                        continue
+                    }
+
+                    // 日期后面的字段通常是时间 (HH:MM)
+                    val timeIndex = dateIndex + 1
+
+                    // 时间后面的所有内容都是文件名
+                    val nameStartIndex = timeIndex + 1
+                    if (nameStartIndex >= parts.size) {
+                        Log.w(TAG, "Cannot find filename position: $line")
+                        continue
+                    }
+
+                    var name = parts.subList(nameStartIndex, parts.size).joinToString(" ")
+                    val isSymlink = permissions.startsWith("l")
+
+                    // 处理符号链接格式 "name -> target"
+                    if (isSymlink && name.contains(" -> ")) {
+                        name = name.substringBefore(" -> ")
+                        Log.d(TAG, "Found symlink (fallback): $name")
+                    }
+
+                    // 跳过 . 和 .. 条目
+                    if (name == "." || name == "..") continue
+
+                    // 文件大小通常在用户和组之后，日期之前
+                    val sizeIndex = dateIndex - 1
+                    val size = if (sizeIndex >= 0) parts[sizeIndex].toLongOrNull() ?: 0 else 0
+
+                    // 组合日期和时间，并转换为时间戳
+                    val dateTimeStr = "${parts[dateIndex]} ${parts[timeIndex]}"
+                    val timestamp =
+                            try {
+                                val parsedDate = dateFormat.parse(dateTimeStr)
+                                parsedDate?.time?.toString() ?: "0"
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error parsing fallback date: $dateTimeStr", e)
+                                "0"
+                            }
+
+                    entries.add(
+                            DirectoryListingData.FileEntry(
+                                    name = name,
+                                    isDirectory = isDirectory,
+                                    size = size,
+                                    permissions = permissions,
+                                    lastModified = timestamp
                             )
                     )
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error parsing directory entry: $line", e)
+                Log.e(TAG, "Error parsing directory entry: ${lines[i]}", e)
                 // 跳过这一行但继续处理其他行
             }
         }

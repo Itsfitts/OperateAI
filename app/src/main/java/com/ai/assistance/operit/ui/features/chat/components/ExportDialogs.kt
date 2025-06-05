@@ -33,10 +33,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.core.subpack.ApkEditor
 import com.ai.assistance.operit.core.subpack.ExeEditor
+import com.ai.assistance.operit.core.subpack.KeyStoreHelper
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.security.KeyStore
 import java.util.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -516,12 +516,26 @@ fun ExportCompleteDialog(
                             modifier = Modifier.padding(top = 4.dp)
                     )
                 } else if (errorMessage != null) {
-                    Text(
-                            errorMessage,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.Red,
-                            textAlign = TextAlign.Center
-                    )
+                    // 使用可滚动的列表显示错误信息，特别是对于长消息
+                    Box(
+                            modifier =
+                                    Modifier.fillMaxWidth()
+                                            .heightIn(min = 80.dp, max = 200.dp)
+                                            .border(
+                                                    1.dp,
+                                                    Color.Red.copy(alpha = 0.5f),
+                                                    RoundedCornerShape(8.dp)
+                                            )
+                                            .padding(8.dp)
+                    ) {
+                        Text(
+                                errorMessage,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.Red,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -608,7 +622,8 @@ suspend fun exportAndroidApp(
 
             // 6. 准备签名文件
             onProgress(0.7f, "准备签名...")
-            val keyStoreFile = createOrGetKeystore(context)
+            // 使用KeyStoreHelper获取密钥库
+            val keyStoreFile = KeyStoreHelper.getOrCreateKeystore(context)
             Log.d(
                     "ExportDialogs",
                     "签名使用密钥库: ${keyStoreFile.absolutePath}, 大小: ${keyStoreFile.length()}"
@@ -643,13 +658,19 @@ suspend fun exportAndroidApp(
 
             // 8. 打包并签名
             onProgress(0.9f, "完成打包...")
-            val signedApk = apkEditor.repackAndSign()
+            try {
+                val signedApk = apkEditor.repackAndSign()
 
-            // 9. 清理
-            apkEditor.cleanup()
+                // 9. 清理
+                apkEditor.cleanup()
 
-            onProgress(1.0f, "导出完成!")
-            onComplete(true, signedApk.absolutePath, null)
+                onProgress(1.0f, "导出完成!")
+                onComplete(true, signedApk.absolutePath, null)
+            } catch (e: Exception) {
+                Log.e("ExportDialogs", "签名APK失败", e)
+                onComplete(false, null, "签名APK失败: ${e.message}")
+                apkEditor.cleanup() // 确保失败时也清理资源
+            }
         }
     } catch (e: Exception) {
         Log.e("ExportDialogs", "导出失败", e)
@@ -689,97 +710,106 @@ suspend fun exportWindowsApp(
             }
             tempDir.mkdirs()
 
-            // 1. 从assets复制windows.zip模板到临时目录
-            onProgress(0.2f, "复制应用模板...")
-            val templateZip = File(tempDir, "windows.zip")
-            context.assets.open("subpack/windows.zip").use { input ->
-                FileOutputStream(templateZip).use { output -> input.copyTo(output) }
-            }
+            try {
+                // 1. 从assets复制windows.zip模板到临时目录
+                onProgress(0.2f, "复制应用模板...")
+                val templateZip = File(tempDir, "windows.zip")
+                context.assets.open("subpack/windows.zip").use { input ->
+                    FileOutputStream(templateZip).use { output -> input.copyTo(output) }
+                }
 
-            // 2. 解压windows.zip
-            onProgress(0.3f, "解压应用模板...")
-            val extractedDir = File(tempDir, "extracted")
-            extractedDir.mkdirs()
+                // 2. 解压windows.zip
+                onProgress(0.3f, "解压应用模板...")
+                val extractedDir = File(tempDir, "extracted")
+                extractedDir.mkdirs()
 
-            // 解压ZIP文件
-            java.util.zip.ZipFile(templateZip).use { zip ->
-                val entries = zip.entries()
-                while (entries.hasMoreElements()) {
-                    val entry = entries.nextElement()
-                    val entryFile = File(extractedDir, entry.name)
+                // 解压ZIP文件
+                java.util.zip.ZipFile(templateZip).use { zip ->
+                    val entries = zip.entries()
+                    while (entries.hasMoreElements()) {
+                        val entry = entries.nextElement()
+                        val entryFile = File(extractedDir, entry.name)
 
-                    if (entry.isDirectory) {
-                        entryFile.mkdirs()
+                        if (entry.isDirectory) {
+                            entryFile.mkdirs()
+                        } else {
+                            entryFile.parentFile?.mkdirs()
+                            zip.getInputStream(entry).use { input ->
+                                FileOutputStream(entryFile).use { output -> input.copyTo(output) }
+                            }
+                        }
+                    }
+                }
+
+                // 3. 如果提供了图标，修改assistance_subpack.exe的图标
+                if (iconUri != null) {
+                    onProgress(0.4f, "更换应用图标...")
+                    val mainExe = File(extractedDir, "assistance_subpack.exe")
+                    if (mainExe.exists()) {
+                        try {
+                            val exeEditor = ExeEditor.fromFile(context, mainExe)
+                            context.contentResolver.openInputStream(iconUri)?.use { input ->
+                                exeEditor.changeIcon(input).setOutput(mainExe).process()
+                            }
+                            Log.d("ExportDialogs", "已更换Windows应用图标")
+                        } catch (e: Exception) {
+                            Log.e("ExportDialogs", "更换Windows应用图标失败", e)
+                            // 继续执行，不因图标失败而中断整个导出流程
+                        }
                     } else {
-                        entryFile.parentFile?.mkdirs()
-                        zip.getInputStream(entry).use { input ->
-                            FileOutputStream(entryFile).use { output -> input.copyTo(output) }
-                        }
+                        Log.e("ExportDialogs", "未找到assistance_subpack.exe文件")
                     }
                 }
-            }
 
-            // 3. 如果提供了图标，修改assistance_subpack.exe的图标
-            if (iconUri != null) {
-                onProgress(0.4f, "更换应用图标...")
-                val mainExe = File(extractedDir, "assistance_subpack.exe")
-                if (mainExe.exists()) {
-                    try {
-                        val exeEditor = ExeEditor.fromFile(context, mainExe)
-                        context.contentResolver.openInputStream(iconUri)?.use { input ->
-                            exeEditor.changeIcon(input).setOutput(mainExe).process()
-                        }
-                        Log.d("ExportDialogs", "已更换Windows应用图标")
-                    } catch (e: Exception) {
-                        Log.e("ExportDialogs", "更换Windows应用图标失败", e)
-                        // 继续执行，不因图标失败而中断整个导出流程
-                    }
-                } else {
-                    Log.e("ExportDialogs", "未找到assistance_subpack.exe文件")
+                // 4. 复制网页内容到data\flutter_assets\assets\web_content
+                onProgress(0.5f, "复制网页内容...")
+                val webContentTarget = File(extractedDir, "data/flutter_assets/assets/web_content")
+                if (!webContentTarget.exists()) {
+                    webContentTarget.mkdirs()
+                }
+
+                Log.d(
+                        "ExportDialogs",
+                        "复制网页文件到Windows应用: ${webContentDir.absolutePath} -> ${webContentTarget.absolutePath}"
+                )
+                copyDirectory(webContentDir, webContentTarget)
+
+                // 5. 创建最终输出文件名
+                val timestamp =
+                        java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                                .format(java.util.Date())
+                val safeName = appName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                val outputZip = File(outputDir, "${safeName}_${timestamp}.zip")
+
+                // 6. 重新打包为ZIP
+                onProgress(0.8f, "打包应用...")
+
+                // 确保输出文件不存在
+                if (outputZip.exists()) {
+                    outputZip.delete()
+                }
+
+                // 创建ZIP文件
+                val buffer = ByteArray(1024)
+                java.util.zip.ZipOutputStream(FileOutputStream(outputZip)).use { zipOut ->
+                    // 添加文件到ZIP
+                    addDirToZip(extractedDir, extractedDir, zipOut, buffer)
+                }
+
+                onProgress(1.0f, "导出完成!")
+                onComplete(true, outputZip.absolutePath, null)
+            } catch (e: Exception) {
+                Log.e("ExportDialogs", "Windows应用导出过程失败", e)
+                onComplete(false, null, "导出过程失败: ${e.message}")
+            } finally {
+                // 7. 清理临时文件
+                try {
+                    onProgress(0.9f, "清理临时文件...")
+                    tempDir.deleteRecursively()
+                } catch (e: Exception) {
+                    Log.e("ExportDialogs", "清理临时文件失败", e)
                 }
             }
-
-            // 4. 复制网页内容到data\flutter_assets\assets\web_content
-            onProgress(0.5f, "复制网页内容...")
-            val webContentTarget = File(extractedDir, "data/flutter_assets/assets/web_content")
-            if (!webContentTarget.exists()) {
-                webContentTarget.mkdirs()
-            }
-
-            Log.d(
-                    "ExportDialogs",
-                    "复制网页文件到Windows应用: ${webContentDir.absolutePath} -> ${webContentTarget.absolutePath}"
-            )
-            copyDirectory(webContentDir, webContentTarget)
-
-            // 5. 创建最终输出文件名
-            val timestamp =
-                    java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
-                            .format(java.util.Date())
-            val safeName = appName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
-            val outputZip = File(outputDir, "${safeName}_${timestamp}.zip")
-
-            // 6. 重新打包为ZIP
-            onProgress(0.8f, "打包应用...")
-
-            // 确保输出文件不存在
-            if (outputZip.exists()) {
-                outputZip.delete()
-            }
-
-            // 创建ZIP文件
-            val buffer = ByteArray(1024)
-            java.util.zip.ZipOutputStream(FileOutputStream(outputZip)).use { zipOut ->
-                // 添加文件到ZIP
-                addDirToZip(extractedDir, extractedDir, zipOut, buffer)
-            }
-
-            // 7. 清理临时文件
-            onProgress(0.9f, "清理临时文件...")
-            tempDir.deleteRecursively()
-
-            onProgress(1.0f, "导出完成!")
-            onComplete(true, outputZip.absolutePath, null)
         }
     } catch (e: Exception) {
         Log.e("ExportDialogs", "Windows应用导出失败", e)
@@ -829,106 +859,14 @@ private fun addDirToZip(
 
 /** 创建或获取应用签名密钥库 */
 private fun createOrGetKeystore(context: Context): File {
-    val keyStoreFile = File(context.filesDir, "app_signing.keystore")
+    // 直接使用KeyStoreHelper
+    return KeyStoreHelper.getOrCreateKeystore(context)
+}
 
-    // 如果已经存在合适大小的密钥库文件，直接返回
-    if (keyStoreFile.exists() && keyStoreFile.length() > 1000) {
-        // 尝试验证密钥库文件
-        try {
-            // 首先尝试PKCS12格式加载
-            FileInputStream(keyStoreFile).use { input ->
-                val keyStore = KeyStore.getInstance("PKCS12")
-                keyStore.load(input, "android".toCharArray())
-
-                // 确认至少包含一个密钥
-                if (keyStore.aliases().hasMoreElements()) {
-                    Log.d("ExportDialogs", "已验证PKCS12格式密钥库有效")
-                    return keyStoreFile
-                }
-            }
-        } catch (e: Exception) {
-            // PKCS12格式加载失败，尝试JKS格式
-            try {
-                FileInputStream(keyStoreFile).use { input ->
-                    val keyStore = KeyStore.getInstance("JKS")
-                    keyStore.load(input, "android".toCharArray())
-
-                    // 确认至少包含一个密钥
-                    if (keyStore.aliases().hasMoreElements()) {
-                        Log.d("ExportDialogs", "已验证JKS格式密钥库有效")
-                        return keyStoreFile
-                    }
-                }
-            } catch (e2: Exception) {
-                // 两种格式都加载失败，认为密钥库无效
-                Log.e("ExportDialogs", "密钥库验证失败: ${e.message}, ${e2.message}")
-                keyStoreFile.delete()
-            }
-        }
-    }
-
-    try {
-        // 复制assets中预置的密钥库
-        val assetKeystore = "app_signing.keystore"
-
-        // 确保assets中存在该文件
-        try {
-            val assetFiles = context.assets.list("") ?: emptyArray()
-            if (!assetFiles.contains(assetKeystore)) {
-                throw RuntimeException("在assets目录中找不到密钥库文件: $assetKeystore")
-            }
-        } catch (e: Exception) {
-            throw RuntimeException("列出assets文件失败: ${e.message}")
-        }
-
-        // 从assets复制密钥库文件
-        context.assets.open(assetKeystore).use { input ->
-            val bytes = input.readBytes()
-            if (bytes.size < 1000) {
-                throw RuntimeException("密钥库文件大小异常: ${bytes.size}字节")
-            }
-
-            if (keyStoreFile.exists()) {
-                keyStoreFile.delete()
-            }
-
-            keyStoreFile.outputStream().use { output ->
-                output.write(bytes)
-                output.flush()
-            }
-        }
-
-        if (!keyStoreFile.exists() || keyStoreFile.length() < 1000) {
-            throw RuntimeException("无法正确复制密钥库文件")
-        }
-
-        // 验证复制后的密钥库
-        try {
-            // 首先尝试PKCS12格式
-            try {
-                FileInputStream(keyStoreFile).use { input ->
-                    val keyStore = KeyStore.getInstance("PKCS12")
-                    keyStore.load(input, "android".toCharArray())
-                    Log.d("ExportDialogs", "验证成功：密钥库是PKCS12格式")
-                }
-            } catch (e: Exception) {
-                // 如果PKCS12失败，尝试JKS
-                FileInputStream(keyStoreFile).use { input2 ->
-                    val keyStore = KeyStore.getInstance("JKS")
-                    keyStore.load(input2, "android".toCharArray())
-                    Log.d("ExportDialogs", "验证成功：密钥库是JKS格式")
-                }
-            }
-        } catch (e: Exception) {
-            throw RuntimeException("无法验证复制的密钥库文件: ${e.message}")
-        }
-    } catch (e: Exception) {
-        // 处理异常
-        e.printStackTrace()
-        throw RuntimeException("准备密钥库失败: ${e.message}")
-    }
-
-    return keyStoreFile
+/** 验证密钥库文件是否有效 */
+private fun validateKeystore(file: File, type: String, password: String): Boolean {
+    // 直接使用KeyStoreHelper
+    return KeyStoreHelper.validateKeystore(file, type, password)
 }
 
 /** 复制目录及其内容 */

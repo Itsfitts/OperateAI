@@ -5,12 +5,12 @@
 </div>
 
 <div align="center">
-  <p>
-    <img src="docx/assets/67bba92d5f1dbd7917345b6a73b1760.jpg" width="22%" alt="Operit预览图1">&nbsp;&nbsp;
-    <img src="docx/assets/e18954ffd6a4bc8cc465f611fee7b71.jpg" width="22%" alt="Operit预览图2">&nbsp;&nbsp;
-    <img src="docx/assets/ee852df3c187771fba0aa92b36a57f8.jpg" width="22%" alt="Operit预览图3">&nbsp;&nbsp;
-    <img src="docx/assets/d7580a42ae03c723121bd172e1f9e7d.jpg" width="22%" alt="Operit预览图4">
-  </p>
+  <div style="padding: 10px 0; text-align: center;">
+    <img src="docx/assets/67bba92d5f1dbd7917345b6a73b1760.jpg" width="22%" alt="Operit预览图1" style="display: inline-block; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.15); margin: 0 3px; max-width: 220px;">
+    <img src="docx/assets/e18954ffd6a4bc8cc465f611fee7b71.jpg" width="22%" alt="Operit预览图2" style="display: inline-block; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.15); margin: 0 3px; max-width: 220px;">
+    <img src="docx/assets/ee852df3c187771fba0aa92b36a57f8.jpg" width="22%" alt="Operit预览图3" style="display: inline-block; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.15); margin: 0 3px; max-width: 220px;">
+    <img src="docx/assets/d7580a42ae03c723121bd172e1f9e7d.jpg" width="22%" alt="Operit预览图4" style="display: inline-block; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.15); margin: 0 3px; max-width: 220px;">
+  </div>
   <p><b>🚀 我们非常需要各位去推广这个软件来获取更高的关注度 🚀</b></p>
 </div>
 
@@ -27,6 +27,26 @@
 
 
 ## 🚀 核心功能
+
+
+### 🌐 WebDev 功能
+
+Operit AI 现已支持 WebDev 功能，让您在移动端也能享受到丰富的 Web 开发和互动体验。同时可以通过软件把生成的网页导出到apk和exe，在手机或者电脑上独立运行。
+
+<div align="center">
+  <div style="margin: 30px 0;">
+    <!-- 桌面端截图 -->
+    <div style="margin-bottom: 30px;">
+      <img src="docx/assets/webdev/c851e530a258bbbbf41f87dcb907b14.png" width="85%" alt="WebDev功能-导出平台" style="border-radius: 6px; box-shadow: 0 5px 15px rgba(0,0,0,0.2);">
+    </div>
+    <!-- 移动端截图 -->
+    <div>
+      <img src="docx/assets/webdev/6b0f3650dd4c5709069d2e4201d3cb9.jpg" width="26%" alt="WebDev功能-五子棋" style="border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.15); margin: 0 5px; display: inline-block; vertical-align: middle;">
+      <img src="docx/assets/webdev/519137715fc99270d97fd42086119b5.jpg" width="26%" alt="WebDev功能-介绍页" style="border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.15); margin: 0 5px; display: inline-block; vertical-align: middle;">
+      <img src="docx/assets/webdev/9e43331c5f055b1bd82cd0f7d74704d.jpg" width="26%" alt="WebDev功能-音游" style="border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.15); margin: 0 5px; display: inline-block; vertical-align: middle;">
+    </div>
+  </div>
+</div>
 
 ### 🔌插件系统
 
@@ -46,6 +66,7 @@
 ### 🧰 独立工具箱
 
 考虑到我们的工具比较强大，我们单独推出了一套工具箱可以快速进行工具操作。
+
 
 ## 🚀 快速开始
 

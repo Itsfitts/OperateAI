@@ -7,263 +7,427 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
 fun HelpScreen(onBackPressed: () -> Unit = {}) {
-        Column(
-                modifier =
-                        Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())
-        ) {
-                // 标题部分
-                Text(
-                        text = "Operit AI 使用指南",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                )
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        // 标题部分
+        Text(
+            text = "Operit AI 工具指南",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
 
-                // 介绍
-                Text(
-                        text = "Operit AI 是一款智能助手应用，可以帮助您更高效地使用设备，理解和分析屏幕内容，执行各种智能任务。",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(bottom = 24.dp)
-                )
-
-                // 功能模块部分 - 使用网格布局
-                Column(modifier = Modifier.fillMaxWidth()) {
-                        // 第一行：AI对话和工具箱
-                        Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                                FeatureCard(
-                                        title = "AI 对话",
-                                        description =
-                                                "支持使用工具和设备交互，能对话也能计划。\n\n· 识别并分析当前屏幕内容\n· 执行多步骤的复杂任务\n· 连续多轮对话并保持记忆\n· 调用多种工具拓展能力",
-                                        icon = Icons.Default.Chat,
-                                        modifier = Modifier.weight(1f)
-                                )
-
-                                FeatureCard(
-                                        title = "工具箱",
-                                        description =
-                                                "提供多样化的系统工具，增强操作能力。\n\n· 执行系统命令与自动化\n· 界面元素自动识别点击\n· 文件管理与内容处理\n· 实时设备状态监控",
-                                        icon = Icons.Default.Build,
-                                        modifier = Modifier.weight(1f)
-                                )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // 第二行：问题库和包管理
-                        Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                                FeatureCard(
-                                        title = "问题库",
-                                        description =
-                                                "记录解决方案，一定程度上作为AI记忆的使用。\n\n· 永久保存重要对话内容\n· 分类整理解决过的问题\n· 快速查找历史解决方案\n· 帮助AI形成长期记忆",
-                                        icon = Icons.Default.Storage,
-                                        modifier = Modifier.weight(1f)
-                                )
-
-                                FeatureCard(
-                                        title = "包管理",
-                                        description =
-                                                "可以接入官方或者第三方的拓展包，让AI对话中支持更多的功能。\n\n· 一键安装官方扩展包\n· 导入自定义JavaScript工具\n· 管理第三方扩展模块\n· 为AI增加专业领域能力",
-                                        icon = Icons.Default.Extension,
-                                        modifier = Modifier.weight(1f)
-                                )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // 第三行：权限授予和设置
-                        Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                                FeatureCard(
-                                        title = "权限授予",
-                                        description =
-                                                "安全且可控的权限管理中心。\n\n· 根据需要开启必要功能\n· 清晰解释每项权限用途\n· 随时可查看或关闭权限\n· 保护用户隐私和安全",
-                                        icon = Icons.Default.Security,
-                                        modifier = Modifier.weight(1f)
-                                )
-
-                                FeatureCard(
-                                        title = "设置",
-                                        description =
-                                                "根据个人喜好自定义应用体验。\n\n· 调整显示与界面选项\n· 设置个性化使用习惯\n· 配置应用工作模式\n· 管理消息通知方式",
-                                        icon = Icons.Default.Settings,
-                                        modifier = Modifier.weight(1f)
-                                )
-                        }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // 基本使用指南
-                Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                        text = "基本使用步骤",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(bottom = 12.dp)
-                                )
-
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        StepItem(number = "1", text = "先进行授权（前往权限授予页面，授予必要的权限）")
-                                        StepItem(
-                                                number = "2",
-                                                text = "在包管理加入需要的包（前往包管理页面，导入和管理扩展包）"
-                                        )
-                                        StepItem(
-                                                number = "3",
-                                                text = "修改为自己的API（目前使用的是开发者的Token，用完为止，仅供免费体验）"
-                                        )
-                                }
-                        }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // 使用技巧
-                Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                        text = "使用技巧",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(bottom = 12.dp)
-                                )
-
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        TipItem(text = "安装包和使用mcp来让自己的ai支持更多工具")
-                                        TipItem(text = "更改设置的偏好来让ai更加个性化")
-                                        TipItem(text = "如果不希望ai更改，可以锁定偏好，多个偏好一键切换")
-                                        TipItem(text = "ai对话的计划模式不是一定开着好，对于计划性不强的任务直接对话效率更高")
-                                        TipItem(text = "通过更改权限设置，来让ai每次请求的时候不会都弹出权限请求")
-                                        TipItem(text = "为了保证安全，请确保软件Github的开源版本")
-                                        TipItem(text = "及时更新软件以获取用户体验")
-                                        TipItem(text = "推广软件以让更多的人知道，加入软件的开源开发来支持更多的功能")
-                                }
-                        }
-                }
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                // 联系我们
-                Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                        Text(
-                                text = "如需更多帮助，请联系我们",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                                text = "support@operit.ai",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 4.dp)
-                        )
-                }
-        }
-}
-
-@Composable
-fun FeatureCard(
-        title: String,
-        description: String,
-        icon: ImageVector,
-        modifier: Modifier = Modifier
-) {
+        // 简介
         Surface(
-                modifier = modifier.heightIn(min = 180.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
         ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                        ) {
-                                Icon(
-                                        imageVector = icon,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                )
-                        }
-
-                        Text(
-                                text = description,
-                                style = MaterialTheme.typography.bodySmall,
-                                lineHeight = 16.sp
-                        )
-                }
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Operit AI 内置强大工具集",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Text(
+                    text = "以下是AI可以调用的内置工具和扩展包，使用这些工具可以帮助AI更高效地完成各种任务。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 内置工具部分
+        var expandedCoreTools by remember { mutableStateOf(true) }
+        ExpandableCard(
+            title = "内置核心工具",
+            icon = Icons.Default.Build,
+            expanded = expandedCoreTools,
+            onExpandChange = { expandedCoreTools = it }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ToolCategoryItem(
+                    title = "基础工具",
+                    items = listOf(
+                        "sleep: 短暂暂停执行",
+                        "device_info: 获取设备详细信息",
+                        "use_package: 激活扩展包",
+                        "query_problem_library: 查询问题库"
+                    )
+                )
+                
+                ToolCategoryItem(
+                    title = "文件系统工具",
+                    items = listOf(
+                        "list_files: 列出目录中的文件",
+                        "read_file: 读取文件内容",
+                        "write_file: 写入内容到文件",
+                        "delete_file: 删除文件或目录",
+                        "file_exists: 检查文件是否存在",
+                        "move_file: 移动或重命名文件",
+                        "copy_file: 复制文件或目录",
+                        "make_directory: 创建目录",
+                        "find_files: 搜索匹配文件",
+                        "zip_files/unzip_files: 压缩/解压文件",
+                        "download_file: 从网络下载文件"
+                    )
+                )
+                
+                ToolCategoryItem(
+                    title = "HTTP工具",
+                    items = listOf(
+                        "http_request: 发送HTTP请求",
+                        "multipart_request: 上传文件",
+                        "manage_cookies: 管理cookies",
+                        "visit_web: 访问并提取网页内容"
+                    )
+                )
+                
+                ToolCategoryItem(
+                    title = "系统操作工具",
+                    items = listOf(
+                        "get_system_setting: 获取系统设置",
+                        "modify_system_setting: 修改系统设置",
+                        "install_app/uninstall_app: 安装/卸载应用",
+                        "start_app/stop_app: 启动/停止应用",
+                        "get_notifications: 获取设备通知",
+                        "get_device_location: 获取设备位置"
+                    )
+                )
+                
+                ToolCategoryItem(
+                    title = "UI自动化工具",
+                    items = listOf(
+                        "get_page_info: 获取UI屏幕信息",
+                        "tap: 模拟点击坐标",
+                        "click_element: 点击UI元素",
+                        "set_input_text: 设置输入文本",
+                        "press_key: 模拟按键",
+                        "swipe: 模拟滑动手势",
+                        "find_element: 查找UI元素"
+                    )
+                )
+                
+                ToolCategoryItem(
+                    title = "FFmpeg工具",
+                    items = listOf(
+                        "ffmpeg_execute: 执行FFmpeg命令",
+                        "ffmpeg_info: 获取FFmpeg信息",
+                        "ffmpeg_convert: 转换视频文件"
+                    )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 扩展包部分
+        var expandedPackages by remember { mutableStateOf(true) }
+        ExpandableCard(
+            title = "可用扩展包",
+            icon = Icons.Default.Extension,
+            expanded = expandedPackages,
+            onExpandChange = { expandedPackages = it }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                PackageItem(
+                    name = "writer",
+                    description = "高级文件编辑和读取功能，支持分段编辑、差异编辑、行号编辑以及高级文件读取操作",
+                    icon = Icons.Default.Edit
+                )
+                
+                PackageItem(
+                    name = "various_search",
+                    description = "多平台搜索功能，支持从必应、百度、搜狗、夸克等平台获取搜索结果",
+                    icon = Icons.Default.Search
+                )
+                
+                PackageItem(
+                    name = "daily_life",
+                    description = "日常生活工具集合，包括日期时间查询、设备状态监测、天气搜索、提醒闹钟设置、短信电话通讯等",
+                    icon = Icons.Default.DateRange
+                )
+                
+                PackageItem(
+                    name = "super_admin",
+                    description = "超级管理员工具集，提供终端命令和Shell操作的高级功能",
+                    icon = Icons.Default.AdminPanelSettings
+                )
+                
+                PackageItem(
+                    name = "code_runner",
+                    description = "多语言代码执行能力，支持JavaScript、Python、Ruby、Go和Rust脚本的运行",
+                    icon = Icons.Default.Code
+                )
+                
+                PackageItem(
+                    name = "baidu_map",
+                    description = "百度地图相关功能",
+                    icon = Icons.Default.Map
+                )
+                
+                PackageItem(
+                    name = "qq_intelligent",
+                    description = "QQ智能助手，通过UI自动化技术实现QQ应用交互",
+                    icon = Icons.Default.Message
+                )
+                
+                PackageItem(
+                    name = "time",
+                    description = "提供时间相关功能",
+                    icon = Icons.Default.AccessTime
+                )
+                
+                PackageItem(
+                    name = "various_output",
+                    description = "提供图片输出功能",
+                    icon = Icons.Default.Image
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 使用指南
+        var expandedGuide by remember { mutableStateOf(true) }
+        ExpandableCard(
+            title = "工具使用指南",
+            icon = Icons.Default.Info,
+            expanded = expandedGuide,
+            onExpandChange = { expandedGuide = it }
+        ) {
+            Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                GuideItem(
+                    title = "工具调用",
+                    content = "AI会根据需要自动调用合适的工具。每次只能调用一个工具，工具执行完成后会自动将结果返回给AI。"
+                )
+                
+                GuideItem(
+                    title = "扩展包激活",
+                    content = "使用扩展包中的工具前，需要先激活该包。AI会自动使用use_package工具来激活所需的包。"
+                )
+                
+                GuideItem(
+                    title = "权限管理",
+                    content = "部分工具（如系统操作、UI自动化等）需要用户授予相应权限才能使用。"
+                )
+                
+                GuideItem(
+                    title = "计划模式",
+                    content = "在处理复杂任务时，可以使用计划模式，AI会将任务拆分为多个步骤并依次执行。"
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // 联系信息
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 1.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "如需更多帮助，请联系我们",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "aaswordsman@foxmail.com",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable
-fun StepItem(number: String, text: String) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                        modifier = Modifier.size(24.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primary
-                ) {
-                        Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                        text = number,
-                                        color = Color.White,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold
-                                )
-                        }
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(text = text, style = MaterialTheme.typography.bodyMedium)
-        }
-}
-
-@Composable
-fun TipItem(text: String) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                Icon(
-                        imageVector = Icons.Default.Star,
+fun ExpandableCard(
+    title: String,
+    icon: ImageVector,
+    expanded: Boolean,
+    onExpandChange: (Boolean) -> Unit,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = if (expanded) 8.dp else 0.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = icon,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 0.5.dp).size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = text, style = MaterialTheme.typography.bodyMedium)
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                IconButton(onClick = { onExpandChange(!expanded) }) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "收起" else "展开"
+                    )
+                }
+            }
+            if (expanded) {
+                content()
+            }
         }
+    }
+}
+
+@Composable
+fun ToolCategoryItem(
+    title: String,
+    items: List<String>
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items.forEach { item ->
+                    Text(
+                        text = "• $item",
+                        style = MaterialTheme.typography.bodyMedium,
+                        lineHeight = 18.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PackageItem(
+    name: String,
+    description: String,
+    icon: ImageVector
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(8.dp)
+                        .size(24.dp)
+                )
+            }
+            
+            Spacer(modifier = Modifier.width(12.dp))
+            
+            Column {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun GuideItem(
+    title: String,
+    content: String
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.CheckCircle,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        
+        Text(
+            text = content,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 28.dp, top = 4.dp)
+        )
+    }
 }

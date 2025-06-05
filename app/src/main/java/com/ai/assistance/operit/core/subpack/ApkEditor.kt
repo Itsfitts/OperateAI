@@ -225,6 +225,7 @@ private constructor(
     /**
      * 重新打包并签名APK
      * @return 签名后的APK文件
+     * @throws RuntimeException 如果签名失败，抛出包含详细错误信息的异常
      */
     fun repackAndSign(): File {
         // 先重新打包
@@ -247,67 +248,53 @@ private constructor(
         }
 
         // 确定签名后的输出文件
-        val signedOutputFile =
-                if (outputFile != null) {
-                    // 如果已经指定了输出文件，创建一个新的临时文件用于签名过程
-                    File(
-                            unsignedApk.parentFile,
-                            "to_sign_${System.currentTimeMillis()}_${unsignedApk.name}"
-                    )
-                } else {
-                    File(context.cacheDir, "signed_${apkFile.name}")
-                }
+        val signedOutputFile = if (outputFile != null) {
+            // 如果已经指定了输出文件，创建一个新的临时文件用于签名过程
+            File(unsignedApk.parentFile, "to_sign_${System.currentTimeMillis()}_${unsignedApk.name}")
+        } else {
+            File(context.cacheDir, "signed_${apkFile.name}")
+        }
 
         Log.d(TAG, "开始签名APK，输入: ${unsignedApk.absolutePath}, 输出: ${signedOutputFile.absolutePath}")
 
         // 签名APK
-        if (!apkReverseEngineer.signApk(
-                        unsignedApk,
-                        keyStoreFile!!,
-                        keyStorePassword!!,
-                        keyAlias!!,
-                        keyPassword!!,
-                        signedOutputFile
-                )
-        ) {
-            throw RuntimeException("APK签名失败")
+        val signResult = apkReverseEngineer.signApk(
+                unsignedApk,
+                keyStoreFile!!,
+                keyStorePassword!!,
+                keyAlias!!,
+                keyPassword!!,
+                signedOutputFile
+        )
+        
+        if (!signResult.first) {
+            val errorMessage = signResult.second ?: "未知签名错误"
+            throw RuntimeException("APK签名失败: $errorMessage")
         }
 
-        // 如果指定了输出路径，将签名后的文件移动到指定位置
-        val finalOutputFile =
-                if (outputFile != null) {
-                    // 如果signedOutputFile已经存在，则将其复制到指定的输出位置
-                    if (signedOutputFile.exists()) {
-                        // 确保目标目录存在
-                        outputFile!!.parentFile?.mkdirs()
-
-                        // 如果目标文件存在，先删除
-                        if (outputFile!!.exists()) {
-                            outputFile!!.delete()
-                        }
-
-                        // 复制文件内容
-                        signedOutputFile.inputStream().use { input ->
-                            outputFile!!.outputStream().use { output -> input.copyTo(output) }
-                        }
-
-                        // 复制成功后删除临时文件
-                        signedOutputFile.delete()
-
-                        Log.d(TAG, "已将签名后的APK从临时文件复制到指定输出位置: ${outputFile!!.absolutePath}")
-                        outputFile!!
-                    } else {
-                        Log.e(TAG, "签名后的临时文件不存在: ${signedOutputFile.absolutePath}")
-                        signedOutputFile
-                    }
-                } else {
-                    signedOutputFile
-                }
-
-        // 清理临时文件
-        // if (unsignedApk.exists()) {
-        //     unsignedApk.delete()
-        // }
+        // 如果指定了输出路径且签名成功，将签名后的文件移动到指定位置
+        val finalOutputFile = if (outputFile != null && signedOutputFile.exists()) {
+            // 确保目标目录存在
+            outputFile!!.parentFile?.mkdirs()
+            
+            // 如果目标文件存在，先删除
+            if (outputFile!!.exists()) {
+                outputFile!!.delete()
+            }
+            
+            // 复制文件内容
+            signedOutputFile.inputStream().use { input ->
+                outputFile!!.outputStream().use { output -> input.copyTo(output) }
+            }
+            
+            // 复制成功后删除临时文件
+            signedOutputFile.delete()
+            
+            Log.d(TAG, "已将签名后的APK从临时文件复制到指定输出位置: ${outputFile!!.absolutePath}")
+            outputFile!!
+        } else {
+            signedOutputFile
+        }
 
         Log.d(TAG, "APK签名完成: ${finalOutputFile.absolutePath}, 文件大小: ${finalOutputFile.length()}字节")
         return finalOutputFile
