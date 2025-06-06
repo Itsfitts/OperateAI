@@ -164,18 +164,45 @@ class AudioStreamManager(private val context: Context) {
     private fun updateNoiseLevel(buffer: ByteArray, bytesRead: Int) {
         // 计算RMS值作为噪音等级的估计
         var sum = 0.0
+        var peakAmplitude = 0
+        
+        // 分析音频样本计算RMS和峰值
         for (i in 0 until bytesRead step 2) {
             if (i + 1 < bytesRead) {
+                // 将两个字节组合成一个16位样本
                 val sample = buffer[i].toInt() and 0xFF or ((buffer[i + 1].toInt() and 0xFF) shl 8)
-                sum += sample * sample.toDouble()
+                // 将有符号16位转换为有符号整数(-32768 to 32767)
+                val signedSample = if (sample > 32767) sample - 65536 else sample
+                // 更新峰值
+                peakAmplitude = Math.max(peakAmplitude, Math.abs(signedSample))
+                // 累加平方值用于RMS计算
+                sum += signedSample * signedSample.toDouble()
             }
         }
         
-        val rms = Math.sqrt(sum / (bytesRead / 2))
-        val normalizedLevel = Math.min(1.0, rms / 32768.0) // 16位音频的最大值是32768
+        // 样本数量 (16位样本，每个占2字节)
+        val sampleCount = bytesRead / 2
+        if (sampleCount == 0) return
         
-        // 平滑处理
-        currentNoiseLevel = (currentNoiseLevel * 0.7f + normalizedLevel.toFloat() * 0.3f)
+        // 计算RMS (均方根)
+        val rms = Math.sqrt(sum / sampleCount)
+        // 16位音频的最大理论值是32768
+        val maxValue = 32768.0
+        
+        // 计算RMS归一化值 (0.0-1.0)
+        val rmsNormalized = Math.min(1.0, rms / maxValue)
+        
+        // 计算峰值归一化值 (0.0-1.0)
+        val peakNormalized = Math.min(1.0, peakAmplitude.toDouble() / maxValue)
+        
+        // 结合RMS和峰值，更注重峰值以更好反映语音
+        val combinedLevel = rmsNormalized * 0.4 + peakNormalized * 0.6
+        
+        // 应用非线性映射增强对低音量的敏感度
+        val enhancedLevel = Math.pow(combinedLevel, 0.6)
+        
+        // 平滑处理避免数值波动过大
+        currentNoiseLevel = (currentNoiseLevel * 0.7f + enhancedLevel.toFloat() * 0.3f)
     }
     
     /**
@@ -281,6 +308,52 @@ class AudioStreamManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Error checking record permission: ${e.message}")
             return false
+        }
+    }
+    
+    /**
+     * 获取AudioRecord实例，供VAD使用
+     * 注意：调用者负责释放资源
+     * @return AudioRecord实例，如果无法创建则返回null
+     */
+    fun getAudioRecord(): AudioRecord? {
+        if (isRecording && audioRecord != null) {
+            return audioRecord
+        }
+        
+        try {
+            if (ActivityCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.RECORD_AUDIO
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.e(TAG, "Missing RECORD_AUDIO permission")
+                return null
+            }
+            
+            // 创建专用于VAD的AudioRecord实例
+            val vadAudioRecord = AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                sampleRate,
+                channelConfig,
+                audioFormat,
+                bufferSize * 2
+            )
+            
+            if (vadAudioRecord.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "AudioRecord initialization failed")
+                vadAudioRecord.release()
+                return null
+            }
+            
+            // 启动录音
+            vadAudioRecord.startRecording()
+            
+            Log.d(TAG, "Created AudioRecord instance for VAD")
+            return vadAudioRecord
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating AudioRecord for VAD: ${e.message}")
+            return null
         }
     }
     

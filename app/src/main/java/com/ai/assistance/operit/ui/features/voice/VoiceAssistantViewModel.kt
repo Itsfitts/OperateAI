@@ -1,15 +1,13 @@
 package com.ai.assistance.operit.ui.features.voice
 
 import android.app.Application
-import android.content.Context
-import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.ai.assistance.operit.api.AIService
 import com.ai.assistance.operit.api.EnhancedAIService
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.data.model.VoiceCommand
+import com.ai.assistance.operit.ui.features.chat.viewmodel.UiStateDelegate
 import com.ai.assistance.operit.voice.VoiceModule
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +29,7 @@ class VoiceAssistantViewModel(
     private var voiceModule: VoiceModule? = null
     
     // UI状态
+    private val uiStateDelegate = UiStateDelegate()
     private val _uiState = MutableStateFlow(UiState())
     val voiceState: StateFlow<UiState> = _uiState.asStateFlow()
     
@@ -45,7 +44,9 @@ class VoiceAssistantViewModel(
             voiceModule = VoiceModule(
                 context = getApplication(),
                 aiService = aiService,
-                aiToolHandler = aiToolHandler
+                aiToolHandler = aiToolHandler,
+                uiVoiceStateFlow = voiceState,
+                uiStateDelegate = uiStateDelegate
             )
 
             // 监听语音模块状态变化
@@ -66,6 +67,7 @@ class VoiceAssistantViewModel(
                             lastWakeWord = voiceState.lastWakeWord,
                             partialText = voiceState.partialText,
                             lastCommand = voiceState.lastCommand,
+                            isVadModeEnabled = voiceState.isVadModeEnabled,
                             error = voiceState.error
                         )
                     }
@@ -90,14 +92,14 @@ class VoiceAssistantViewModel(
     /**
      * 停止语音监听
      */
-    suspend fun stopListening() {
+    fun stopListening() {
         voiceModule?.stopListening()
     }
     
     /**
      * 语音输出文本
      */
-    suspend fun speak(text: String, interruptCurrent: Boolean = false) {
+    fun speak(text: String, interruptCurrent: Boolean = false) {
         voiceModule?.speak(text, interruptCurrent)
     }
     
@@ -139,6 +141,14 @@ class VoiceAssistantViewModel(
     }
     
     /**
+     * 切换VAD模式
+     */
+    suspend fun toggleVadMode() {
+        val currentState = _uiState.value.isVadModeEnabled
+        voiceModule?.setVadModeEnabled(!currentState)
+    }
+    
+    /**
      * UI状态数据类
      */
     data class UiState(
@@ -155,6 +165,7 @@ class VoiceAssistantViewModel(
         val lastWakeWord: String = "",
         val partialText: String = "",
         val lastCommand: VoiceCommand? = null,
+        val isVadModeEnabled: Boolean = true,
         val error: String? = null
     )
     

@@ -44,6 +44,7 @@ class VoicePreferences(private val context: Context) {
         private val READ_RESPONSES = booleanPreferencesKey("read_responses")
         private val READ_RESPONSE_MODE = stringPreferencesKey("read_response_mode")
         private val AUTO_DETECT_LANGUAGE = booleanPreferencesKey("auto_detect_language")
+        private val VAD_MODE_ENABLED = booleanPreferencesKey("vad_mode_enabled")
         private val TAG = "VoicePreferences"
     }
     
@@ -287,6 +288,15 @@ class VoicePreferences(private val context: Context) {
             preferences[CONTINUOUS_LISTENING] ?: false
         }.first()
     }
+
+    /**
+     * 是否启用连续监听模式
+     */
+    suspend fun getReadResponsesEnabled(): Boolean {
+        return context.voiceDataStore.data.map { preferences ->
+            preferences[CONTINUOUS_LISTENING] ?: false
+        }.first()
+    }
     
     /**
      * 设置是否启用连续监听模式
@@ -357,6 +367,25 @@ class VoicePreferences(private val context: Context) {
     suspend fun setAutoDetectLanguageEnabled(enabled: Boolean) {
         context.voiceDataStore.edit { preferences ->
             preferences[AUTO_DETECT_LANGUAGE] = enabled
+        }
+    }
+    
+    /**
+     * 是否启用VAD模式
+     */
+    suspend fun isVadModeEnabled(): Boolean {
+        return context.voiceDataStore.data.map { preferences ->
+            preferences[VAD_MODE_ENABLED] ?: true // 默认启用
+        }.first()
+    }
+    
+    /**
+     * 设置是否启用VAD模式
+     * @param enabled 是否启用
+     */
+    suspend fun setVadModeEnabled(enabled: Boolean) {
+        context.voiceDataStore.edit { preferences ->
+            preferences[VAD_MODE_ENABLED] = enabled
         }
     }
     

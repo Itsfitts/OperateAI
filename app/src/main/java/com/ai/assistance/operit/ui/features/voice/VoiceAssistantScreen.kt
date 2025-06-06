@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -52,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -145,9 +145,7 @@ fun VoiceAssistantScreen(
                     }
                 },
                 onStopListening = {
-                    coroutineScope.launch {
-                        viewModel.stopListening()
-                    }
+                    viewModel.stopListening()
                 }
             )
         }
@@ -184,6 +182,11 @@ fun VoiceAssistantScreen(
                         viewModel.toggleWakeWord()
                     }
                 },
+                onToggleVadMode = {
+                    coroutineScope.launch {
+                        viewModel.toggleVadMode()
+                    }
+                },
                 modifier = Modifier.padding(paddingValues)
             )
         }
@@ -197,6 +200,7 @@ fun VoiceAssistantScreen(
 fun VoiceAssistantContent(
     voiceState: VoiceAssistantViewModel.UiState,
     onToggleWakeWord: () -> Unit,
+    onToggleVadMode: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -233,6 +237,32 @@ fun VoiceAssistantContent(
                         onCheckedChange = { onToggleWakeWord() },
                         enabled = voiceState.isInitialized
                     )
+                }
+                
+                // 添加VAD模式开关
+                if (voiceState.isWakeWordEnabled) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "使用VAD技术优化:",
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = voiceState.isVadModeEnabled,
+                            onCheckedChange = { onToggleVadMode() },
+                            enabled = voiceState.isWakeWordEnabled
+                        )
+                    }
+                    
+                    if (voiceState.isVadModeEnabled) {
+                        Text(
+                            text = "VAD模式已启用，仅在检测到语音时才激活识别",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 
                 Text(
@@ -401,43 +431,75 @@ fun VoiceAssistantContent(
 
 /**
  * 语音波形可视化
+ * 基于noiseLevel动态显示波形，更好地反映实际语音输入
  */
 @Composable
 fun VoiceWaveform(
     noiseLevel: Float,
     modifier: Modifier = Modifier
 ) {
-    val bars = 20
+    // 记录历史噪音水平，用于创建更真实的波形效果
+    val waveHistory = remember { mutableStateListOf<Float>() }
+    val bars = 20 // 波形条数量
     val maxHeight = 50.dp
+    
+    // 当噪音水平变化时更新历史记录
+    LaunchedEffect(noiseLevel) {
+        // 保持固定长度的历史记录
+        if (waveHistory.size >= bars) {
+            waveHistory.removeAt(0)
+        }
+        // 添加当前噪音水平
+        waveHistory.add(noiseLevel / 100f) // 将0-100范围转为0-1
+    }
     
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // 根据波形历史或动态生成的值创建波形条
         for (i in 0 until bars) {
-            val infiniteTransition = rememberInfiniteTransition(label = "wave")
-            val animatedHeight by infiniteTransition.animateFloat(
-                initialValue = 0.1f,
-                targetValue = 1f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(durationMillis = 500 + (i * 50), easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "wave_bar"
-            )
+            // 获取历史值或生成随机值
+            val barHeightFactor = if (waveHistory.size > i) {
+                // 使用实际历史数据
+                waveHistory[waveHistory.size - 1 - i]
+            } else {
+                // 还没有足够的历史数据时，创建动态效果
+                val infiniteTransition = rememberInfiniteTransition(label = "wave")
+                val animatedHeight by infiniteTransition.animateFloat(
+                    initialValue = 0.1f,
+                    targetValue = 0.6f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(
+                            durationMillis = 600 + (i * 40), 
+                            easing = LinearEasing
+                        ),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "wave_bar"
+                )
+                // 将动画值乘以当前噪音水平，保证总体响应实时噪音
+                animatedHeight * (noiseLevel / 100f).coerceAtLeast(0.1f)
+            }
             
-            // 最终高度结合了噪音水平和动画值
-            val height = maxHeight * noiseLevel * animatedHeight
+            // 应用一些随机变化，使波形看起来更自然
+            val randomFactor = remember(i) { (0.8f + Math.random().toFloat() * 0.4f) }
+            val finalHeight = maxHeight * barHeightFactor * randomFactor
+            
+            // 波形条的颜色根据高度变化
+            val barColor = MaterialTheme.colorScheme.primary.copy(
+                alpha = 0.5f + barHeightFactor * 0.5f // 高度越高，越不透明
+            )
             
             Box(
                 modifier = Modifier
-                    .height(height)
+                    .height(finalHeight.coerceAtLeast(2.dp)) // 确保至少有最小高度
                     .weight(1f)
                     .padding(horizontal = 2.dp)
                     .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-                        MaterialTheme.shapes.small
+                        color = barColor,
+                        shape = MaterialTheme.shapes.small
                     )
             )
         }

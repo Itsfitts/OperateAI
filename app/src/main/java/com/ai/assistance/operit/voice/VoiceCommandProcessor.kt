@@ -7,6 +7,7 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.core.tools.defaultTool.ToolGetter
 import com.ai.assistance.operit.data.model.AITool
+import com.ai.assistance.operit.data.model.ChatMessage
 import com.ai.assistance.operit.data.model.ToolParameter
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.model.VoiceActionType
@@ -16,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,7 +31,8 @@ class VoiceCommandProcessor(
     private val context: Context,
     private val aiService: EnhancedAIService,
     private val coroutineScope: CoroutineScope,
-    private val chatHistory: Flow<List<Pair<String, String>>>
+    private val chatHistory: StateFlow<List<ChatMessage>>,
+    private val aiToolHandler: AIToolHandler
 ) {
     // 命令处理事件
     private val _commandEvents = MutableSharedFlow<CommandEvent>()
@@ -125,11 +128,6 @@ class VoiceCommandProcessor(
             )
         }
         
-        // 如果不是预定义命令，交给AI处理
-        // if (!isDirectCommand) {
-        //     return processWithAI(text)
-        // }
-        
         return CommandProcessResult(
             wasCommand = false,
             commandExecuted = false,
@@ -178,69 +176,7 @@ class VoiceCommandProcessor(
         
         return Pair(true, null)
     }
-    
-    /**
-     * 通过AI处理语音输入
-     * @param text 识别的语音文本
-     */
-    private suspend fun processWithAI(text: String): CommandProcessResult = withContext(Dispatchers.IO) {
-        try {
-            val isConversationActive = AtomicBoolean(true)
-            var toolExecuted = false
-            var cacheText = ""
 
-            // 将文本发送给AI服务
-            aiService.sendMessage(
-                message = "用户通过语音说：\"$text\"。" +
-                    "如果这是一个明确的指令，请使用适当的工具执行；" +
-                    "如果这是一个问题或闲聊，请正常回答；" +
-                    "如果你不确定，请询问用户以获得更多信息。",
-                onPartialResponse = { content, thinking ->
-                    // 只处理显示，不处理工具逻辑
-                    coroutineScope.launch {
-                        _commandEvents.emit(CommandEvent.AIProcessing(content))
-                    }
-                    
-                    // 检查是否包含工具调用的指示
-                    if (content.contains("\"tool\"") || content.contains("正在执行")) {
-                        toolExecuted = true
-                    }
-
-                    cacheText = content
-                },
-                chatHistory = chatHistory.first(),
-                onComplete = {
-                    // 处理会话完成
-                    isConversationActive.set(false)
-                    coroutineScope.launch {
-                        _commandEvents.emit(CommandEvent.AICompleted)
-                    }
-                },
-            )
-
-            Log.e(TAG, "AI response: $cacheText")
-            
-            return@withContext CommandProcessResult(
-                wasCommand = toolExecuted,
-                commandExecuted = toolExecuted,
-                needsConfirmation = false,
-                command = null
-            )
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error processing with AI: ${e.message}")
-            coroutineScope.launch {
-                _commandEvents.emit(CommandEvent.Error("AI处理失败：${e.message}"))
-            }
-            
-            return@withContext CommandProcessResult(
-                wasCommand = false,
-                commandExecuted = false,
-                needsConfirmation = false,
-                command = null
-            )
-        }
-    }
     
     /**
      * 查找匹配的预定义命令
@@ -281,12 +217,9 @@ class VoiceCommandProcessor(
                     // 使用工具处理器打开应用
                     val packageName = command.parameters["packageName"] as? String
                     if (packageName != null) {
-                        // 获取AIToolHandler实例
-                        val toolHandler = AIToolHandler.getInstance(context)
-
                         // 创建AITool实例
                         val aiTool = AITool(
-                            name = "startApp",
+                            name = "start_app",
                             description = "打开指定的应用程序",
                             parameters = listOf(
                                 ToolParameter("package_name", packageName)
@@ -294,7 +227,7 @@ class VoiceCommandProcessor(
                         )
                         
                         // 检查权限
-                        val (hasPermission, errorResult) = checkToolPermission(toolHandler, aiTool)
+                        val (hasPermission, errorResult) = checkToolPermission(aiToolHandler, aiTool)
                         if (!hasPermission) {
                             coroutineScope.launch {
                                 _commandEvents.emit(CommandEvent.Error(errorResult?.error ?: "权限被拒绝"))
@@ -302,6 +235,7 @@ class VoiceCommandProcessor(
                             }
                             return false
                         }
+
                         
                         // 执行工具
                         val result = systemOperationTools.startApp(aiTool)
@@ -311,9 +245,9 @@ class VoiceCommandProcessor(
                         return result.success
                     }
                 }
-                
+
                 // 添加更多命令处理逻辑
-                //     val result = toolHandler.executeTool(aiTool)
+                // val result = aiToolHandler.executeTool(aiTool)
                 
                 else -> {
                     Log.w(TAG, "Unknown command action: ${command.action}")

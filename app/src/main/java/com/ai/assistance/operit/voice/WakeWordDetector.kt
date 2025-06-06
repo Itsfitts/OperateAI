@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * 唤醒词检测器
  * 负责监听和检测特定的唤醒词
+ * 使用VAD技术优化语音检测流程，减少资源消耗
  */
 class WakeWordDetector(
     private val context: Context,
@@ -40,8 +41,17 @@ class WakeWordDetector(
     // 当前使用的唤醒词
     private var currentWakeWords = mutableSetOf<String>()
     
+    // VAD检测器
+    private val voiceActivityDetector by lazy {
+        VoiceActivityDetector(context, audioStreamManager)
+    }
+    
+    // 是否使用VAD模式
+    private var useVadMode = true
+    
     init {
         loadWakeWords()
+        setupVadListener()
     }
     
     /**
@@ -58,6 +68,66 @@ class WakeWordDetector(
             val customWakeWords = voicePreferences.getCustomWakeWords()
             if (customWakeWords.isNotEmpty()) {
                 currentWakeWords.addAll(customWakeWords)
+            }
+        }
+    }
+    
+    /**
+     * 设置VAD监听器
+     */
+    private fun setupVadListener() {
+        detectorScope.launch {
+            voiceActivityDetector.speechState.collect { state ->
+                when (state) {
+                    VoiceActivityDetector.SpeechState.SPEECH_DETECTED -> {
+                        // 检测到语音活动，但尚未处理
+                        Log.d(TAG, "VAD: 检测到语音活动")
+                    }
+                    VoiceActivityDetector.SpeechState.SPEECH_PROCESSING -> {
+                        // VAD确认检测到有效语音，启动语音识别
+                        Log.d(TAG, "VAD: 启动语音识别处理")
+                        
+                        // 只有在检测到有效语音时才启动语音识别
+                        if (isListening.get() && useVadMode) {
+                            // 短暂启动语音识别，带超时，避免长时间运行
+                            startRecognitionAfterVad()
+                        }
+                    }
+                    VoiceActivityDetector.SpeechState.IDLE -> {
+                        // 空闲状态，无需操作
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * VAD检测到语音后启动语音识别
+     */
+    private fun startRecognitionAfterVad() {
+        detectorScope.launch {
+            try {
+                // 启动一次性语音识别，不连续
+                voiceRecognitionService.startListening(false)
+                
+                // 收集识别结果
+                voiceRecognitionService.recognitionResults
+                    .filter { it.isNotEmpty() }
+                    .collect { text ->
+                        // 检查是否包含唤醒词
+                        val detectedWakeWord = checkForWakeWord(text)
+                        if (detectedWakeWord != null) {
+                            _wakeEvents.emit(WakeEvent.WakeWordDetected(detectedWakeWord))
+
+                            // 获取实际命令（去除唤醒词）
+                            val command = extractCommand(text, detectedWakeWord)
+                            if (command.isNotBlank()) {
+                                _wakeEvents.emit(WakeEvent.CommandAfterWake(command))
+                            }
+                        }
+                    }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in recognition after VAD: ${e.message}")
             }
         }
     }
@@ -97,6 +167,14 @@ class WakeWordDetector(
     }
     
     /**
+     * 设置是否使用VAD模式
+     * @param enable 是否启用
+     */
+    fun setVadMode(enable: Boolean) {
+        useVadMode = enable
+    }
+    
+    /**
      * 开始监听唤醒词
      * @param timeoutMs 超时时间，如果为null则持续监听
      */
@@ -109,37 +187,60 @@ class WakeWordDetector(
             try {
                 _wakeEvents.emit(WakeEvent.ListeningStarted)
 
-                withTimeoutOrNull(timeoutMs ?: Long.MAX_VALUE) {
-                    // 使用语音识别服务进行连续监听
-                    voiceRecognitionService.startListening(true)
-
-                    // 订阅识别结果
-                    voiceRecognitionService.recognitionResults
-                        .filter { it.isNotEmpty() }
-                        .collect { text ->
-                            // 检查是否包含唤醒词
-                            val detectedWakeWord = checkForWakeWord(text)
-                            if (detectedWakeWord != null) {
-                                _wakeEvents.emit(WakeEvent.WakeWordDetected(detectedWakeWord))
-
-                                // 获取实际命令（去除唤醒词）
-                                val command = extractCommand(text, detectedWakeWord)
-                                if (command.isNotBlank()) {
-                                    _wakeEvents.emit(WakeEvent.CommandAfterWake(command))
-                                }
-                            }
-                        }
+                if (useVadMode) {
+                    // 使用VAD模式
+                    startVadMode()
+                } else {
+                    // 使用传统模式（直接启动语音识别）
+                    startTraditionalMode(timeoutMs)
                 }
-
-                if (isListening.get()) {
-                    stopListening()
-                }
-
             } catch (e: Exception) {
                 Log.e(TAG, "Error in wake word detection: ${e.message}")
                 _wakeEvents.emit(WakeEvent.Error("唤醒词检测错误: ${e.message}"))
                 stopListening()
             }
+        }
+    }
+    
+    /**
+     * 启动VAD模式
+     */
+    private fun startVadMode() {
+        // 启动VAD检测器
+        voiceActivityDetector.initialize()
+        voiceActivityDetector.startListening()
+        
+        Log.d(TAG, "VAD模式启动")
+    }
+    
+    /**
+     * 启动传统模式
+     */
+    private suspend fun startTraditionalMode(timeoutMs: Long? = null) {
+        withTimeoutOrNull(timeoutMs ?: Long.MAX_VALUE) {
+            // 使用语音识别服务进行连续监听
+            voiceRecognitionService.startListening(true)
+
+            // 订阅识别结果
+            voiceRecognitionService.recognitionResults
+                .filter { it.isNotEmpty() }
+                .collect { text ->
+                    // 检查是否包含唤醒词
+                    val detectedWakeWord = checkForWakeWord(text)
+                    if (detectedWakeWord != null) {
+                        _wakeEvents.emit(WakeEvent.WakeWordDetected(detectedWakeWord))
+
+                        // 获取实际命令（去除唤醒词）
+                        val command = extractCommand(text, detectedWakeWord)
+                        if (command.isNotBlank()) {
+                            _wakeEvents.emit(WakeEvent.CommandAfterWake(command))
+                        }
+                    }
+                }
+        }
+
+        if (isListening.get()) {
+            stopListening()
         }
     }
     
@@ -152,7 +253,15 @@ class WakeWordDetector(
         }
         
         try {
-            // voiceRecognitionService.stopRecognition()
+            // 停止VAD
+            if (useVadMode) {
+                voiceActivityDetector.stopListening()
+            }
+            
+            // 停止语音识别
+            voiceRecognitionService.stopListening()
+            
+            // 发送停止事件
             _wakeEvents.tryEmit(WakeEvent.ListeningStopped) // 先尝试非挂起方式
                 .takeIf { !it }        // 如果失败（返回 false）
                 ?.run {                // 则启动协程挂起 emit
