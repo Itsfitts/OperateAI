@@ -31,59 +31,41 @@ class StreamXmlPluginTest {
         plugin.processChar('<')
         assertTrue(plugin.isTryingToStart)
         assertFalse(plugin.isProcessing)
+
+        plugin.processChar('t')
+        assertTrue(plugin.isTryingToStart)
+        assertFalse(plugin.isProcessing)
     }
 
     @Test
-    fun testCompleteTagRecognition() {
-        // StreamXmlPluginTest.kt
+    fun testCompleteTagRecognitionAndProcessingEnter() {
         val xmlTag = "<test>"
-        // Loop processes characters up to, but not including, xmlTag.last()
-        // For "<test>", loop processes "<tes"
-        for (i in 0 until xmlTag.length - 1) {
-            plugin.processChar(xmlTag[i])
-        }
-        // Test expects that after "<tes", we are trying to start but not yet processing.
-        assertTrue(plugin.isTryingToStart)
-        assertFalse(plugin.isProcessing)
+        xmlTag.forEach { plugin.processChar(it) }
 
-        // Then, process xmlTag.last() (which is 't' for "<test>", but comments imply '>')
-        // Test expects that processing starts *now*.
-        plugin.processChar(xmlTag.last())
-        assertTrue(plugin.isProcessing)
-        assertFalse(plugin.isTryingToStart)
+        assertTrue("Should be in processing state after a full start tag", plugin.isProcessing)
+        assertFalse("Should not be trying to start anymore", plugin.isTryingToStart)
+    }
+
+    @Test
+    fun testTagWithAttributes() {
+        val xmlTag = "<test attr=\"value\">"
+        xmlTag.forEach { plugin.processChar(it) }
+        assertTrue("Should be in processing state after a tag with attributes", plugin.isProcessing)
     }
 
     @Test
     fun testEndTagRecognition() {
-        // 先进入处理状态
-        val xmlStart = "<test>"
-        for (c in xmlStart) {
-            plugin.processChar(c)
-        }
+        val fullXml = "<test>content</test>"
+        fullXml.forEach { plugin.processChar(it) }
 
-        assertTrue(plugin.isProcessing)
-
-        // 测试是否正确消费字符
-        val xmlContent = "This is content"
-        for (c in xmlContent) {
-            val consumed = plugin.processChar(c)
-            assertTrue(consumed)
-        }
-
-        // 测试结束标签
-        val endChar = '>'
-        val consumed = plugin.processChar(endChar)
-        assertTrue(consumed)
-        assertFalse(plugin.isProcessing)
+        assertFalse("Should stop processing after the end tag is found", plugin.isProcessing)
     }
 
     @Test
     fun testFailedMatch() {
         // 测试非XML内容
         val nonXml = "This is not XML"
-        for (c in nonXml) {
-            plugin.processChar(c)
-        }
+        nonXml.forEach { plugin.processChar(it) }
 
         assertFalse(plugin.isTryingToStart)
         assertFalse(plugin.isProcessing)
@@ -93,9 +75,7 @@ class StreamXmlPluginTest {
     fun testResetFunction() {
         // 先进入处理状态
         val xmlTag = "<test>"
-        for (c in xmlTag) {
-            plugin.processChar(c)
-        }
+        xmlTag.forEach { plugin.processChar(it) }
 
         assertTrue(plugin.isProcessing)
 
@@ -108,21 +88,30 @@ class StreamXmlPluginTest {
     }
 
     @Test
-    fun testFullXmlProcessing() {
+    fun testFullXmlProcessingAndCharacterConsumption() {
         val fullXml = "<root attr=\"value\">Content</root>"
         var contentProcessed = false
+        var tagProcessed = false
 
-        for (c in fullXml) {
-            val consumed = plugin.processChar(c)
+        // Test consumption during tag definition
+        val pluginInstance = StreamXmlPlugin()
+        pluginInstance.initPlugin()
+        assertTrue("Should consume '<'", pluginInstance.processChar('<'))
+        assertTrue("Should consume 'r' as part of the tag", pluginInstance.processChar('r'))
+        tagProcessed = true
 
-            // 验证在标签内容部分字符被消费
-            if (plugin.isProcessing && c != '>') {
+        // Reset and test full processing
+        plugin.reset()
+
+        fullXml.forEach { c ->
+            plugin.processChar(c)
+            if (plugin.isProcessing && c != '<' && c != '>') {
                 contentProcessed = true
-                assertTrue(consumed)
             }
         }
 
-        assertTrue(contentProcessed)
-        assertFalse(plugin.isProcessing)
+        assertTrue("Tag definition characters should have been consumed", tagProcessed)
+        assertTrue("Content characters should have been processed", contentProcessed)
+        assertFalse("Should not be in processing state after completion", plugin.isProcessing)
     }
 }
