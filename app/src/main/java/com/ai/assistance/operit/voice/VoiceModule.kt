@@ -316,37 +316,32 @@ class VoiceModule(
         if (recognitionJob == null || currentTime - speakTimestamp >= timeoutMs) {
             cancelJob()
             recognitionJob = moduleScope.launch {
-                if (wakeWordMode && _voiceState.value.isWakeWordEnabled) {
-                    // 使用唤醒词模式
-                    wakeWordDetector.startListening(timeoutMs = null) // 持续监听唤醒词
-                } else {
-                    // 直接开始语音识别
-                    voiceRecognitionService.startListening(false)
-                    voicePreferences.setReadResponseMode(ReadResponseMode.SMART)
-                    
-                    // 开始收集噪音级别数据
-                    moduleScope.launch {
-                        voiceRecognitionService.inputState
-                            .collect { inputState ->
-                                // 更新状态，确保噪音水平数据被传递
-                                _voiceState.value = _voiceState.value.copy(
-                                    isListening = inputState.isListening,
-                                    partialText = inputState.partialResult,
-                                    noiseLevel = inputState.noiseLevel,
-                                    recognitionConfidence = inputState.recognitionConfidence
-                                )
-                            }
-                    }
+                // 直接开始语音识别
+                voiceRecognitionService.startListening(wakeWordMode)
+                voicePreferences.setReadResponseMode(ReadResponseMode.SMART)
 
-                    voiceRecognitionService.recognitionResults
-                        .distinctUntilChanged()  // 只有当值改变时才发射
-                        .buffer(capacity = Channel.CONFLATED) // 只保留最新值
-                        .collect { text ->
-                            if (text.isNotEmpty()) {
-                                handleVoiceCommand(text)
-                            }
+                // 开始收集噪音级别数据
+                moduleScope.launch {
+                    voiceRecognitionService.inputState
+                        .collect { inputState ->
+                            // 更新状态，确保噪音水平数据被传递
+                            _voiceState.value = _voiceState.value.copy(
+                                isListening = inputState.isListening,
+                                partialText = inputState.partialResult,
+                                noiseLevel = inputState.noiseLevel,
+                                recognitionConfidence = inputState.recognitionConfidence
+                            )
                         }
                 }
+
+                voiceRecognitionService.recognitionResults
+                    .distinctUntilChanged()  // 只有当值改变时才发射
+                    .buffer(capacity = Channel.CONFLATED) // 只保留最新值
+                    .collect { text ->
+                        if (text.isNotEmpty()) {
+                            handleVoiceCommand(text)
+                        }
+                    }
             }
         }
     }
@@ -411,6 +406,11 @@ class VoiceModule(
             // 添加用户消息到聊天历史
             voiceHistoryDelegate.addMessageToChat(ChatMessage(sender = "user", content = text))
             _voiceState.value = _voiceState.value.copy(isProcessing = true)
+
+            // TODO: 这里使用sendMessage对于语音交互来说响应太慢，这里添加一些反馈，以确定发送消息给multiProvider了
+            if (!textToSpeechService.isSpeaking.value) {
+                speak("响应处理中 请稍后", true)
+            }
 
             // 向AI发送消息
             aiService.sendMessage(
@@ -499,7 +499,6 @@ class VoiceModule(
                         // 更新最后更新时间
                         lastAiUpdateTime = System.currentTimeMillis()
 
-                        speak("响应处理中", true)
                         appendAiContent(content)
 
                         // 等待下一个更新间隔
@@ -574,34 +573,19 @@ class VoiceModule(
 
             ReadResponseMode.SUMMARY -> {
                 // 这里可以添加逻辑来提取摘要
-                val summary = extractSummary(content)
+                val summary = textSummarizer.process(content)
                 speak(summary)
             }
 
             ReadResponseMode.SMART -> {
                 // 根据响应长度和内容决定如何朗读
-                speak(content)
+                val processText = textSummarizer.process(content)
+                speak(processText)
             }
 
             ReadResponseMode.STREAMING -> {
                 textToSpeechService.handleStreamingText(content)
             }
-        }
-    }
-
-    /**
-     * 提取文本摘要
-     * 简单实现，实际应用中可能需要更复杂的算法
-     * @param text 原始文本
-     * @return 提取的摘要
-     */
-    private fun extractSummary(text: String): String {
-        // 简单实现，取第一句话或前N个字符
-        val firstSentence = text.split(Regex("[.!?。！？]"), 2).firstOrNull()
-        return if (firstSentence != null && firstSentence.length < 100) {
-            firstSentence
-        } else {
-            text.take(100) + "..."
         }
     }
 
@@ -635,8 +619,7 @@ class VoiceModule(
             return
         }
 
-        val processText = textSummarizer.process(text)
-        textToSpeechService.speak(processText, interruptCurrent)
+        textToSpeechService.speak(text, interruptCurrent)
     }
 
     /**

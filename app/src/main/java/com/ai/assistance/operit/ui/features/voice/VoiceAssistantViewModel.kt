@@ -85,7 +85,7 @@ class VoiceAssistantViewModel(
      */
     fun startListening() {
         voiceModule?.startListening(
-            wakeWordMode = _uiState.value.isWakeWordEnabled
+            wakeWordMode = _uiState.value.isContinuousListeningEnabled
         )
     }
     
@@ -129,14 +129,14 @@ class VoiceAssistantViewModel(
     /**
      * 启动连续对话模式
      */
-    suspend fun startContinuousConversation() {
+    fun startContinuousConversation() {
         voiceModule?.startContinuousConversation()
     }
     
     /**
      * 停止连续对话模式
      */
-    suspend fun stopContinuousConversation() {
+    fun stopContinuousConversation() {
         voiceModule?.stopContinuousConversation()
     }
     
