@@ -308,17 +308,18 @@ class VoiceModule(
     /**
      * 开始语音监听
      * @param timeoutMs 超时时间，毫秒
-     * @param wakeWordMode 是否使用唤醒词模式
+     * @param constantListeningMode 是否持续监听
      */
-    fun startListening(timeoutMs: Long = SPEAK_INTERVAL, wakeWordMode: Boolean = false) {
+    fun startListening(timeoutMs: Long = SPEAK_INTERVAL, constantListeningMode: Boolean = false) {
         checkInitialized()
         val currentTime = System.currentTimeMillis()
         if (recognitionJob == null || currentTime - speakTimestamp >= timeoutMs) {
             cancelJob()
             recognitionJob = moduleScope.launch {
                 // 直接开始语音识别
-                voiceRecognitionService.startListening(wakeWordMode)
+                voiceRecognitionService.startListening(constantListeningMode)
                 voicePreferences.setReadResponseMode(ReadResponseMode.SMART)
+                speakTimestamp = currentTime
 
                 // 开始收集噪音级别数据
                 moduleScope.launch {
@@ -353,9 +354,12 @@ class VoiceModule(
         checkInitialized()
         cancelJob()
         recognitionJob = null
+        speakTimestamp = 0
 
         if (_voiceState.value.isWakeWordEnabled && _voiceState.value.isListening) {
             wakeWordDetector.stopListening()
+        } else if (_voiceState.value.isContinuousListeningEnabled) {
+            stopContinuousConversation()
         } else {
             voiceRecognitionService.stopListening()
         }
@@ -572,7 +576,6 @@ class VoiceModule(
             }
 
             ReadResponseMode.SUMMARY -> {
-                // 这里可以添加逻辑来提取摘要
                 val summary = textSummarizer.process(content)
                 speak(summary)
             }
@@ -647,6 +650,15 @@ class VoiceModule(
     }
 
     /**
+     * 启用或禁用持续监听功能
+     * @param enabled 是否启用
+     */
+    fun setConstantListeningEnabled(enabled: Boolean) {
+        voiceRecognitionService.setContinuousListening(enabled)
+        _voiceState.value = _voiceState.value.copy(isContinuousListeningEnabled = enabled)
+    }
+
+    /**
      * 启用或禁用唤醒词功能
      * @param enabled 是否启用
      */
@@ -670,7 +682,7 @@ class VoiceModule(
             voicePreferences.setContinuousListeningEnabled(true)
             _voiceState.value = _voiceState.value.copy(isContinuousListeningEnabled = true)
 
-            startListening(timeoutMs = Long.MAX_VALUE)
+            startListening(timeoutMs = Long.MAX_VALUE, true)
         }
     }
 

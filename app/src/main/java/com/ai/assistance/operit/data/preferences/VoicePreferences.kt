@@ -288,15 +288,6 @@ class VoicePreferences(private val context: Context) {
             preferences[CONTINUOUS_LISTENING] ?: false
         }.first()
     }
-
-    /**
-     * 是否启用连续监听模式
-     */
-    suspend fun getReadResponsesEnabled(): Boolean {
-        return context.voiceDataStore.data.map { preferences ->
-            preferences[CONTINUOUS_LISTENING] ?: false
-        }.first()
-    }
     
     /**
      * 设置是否启用连续监听模式

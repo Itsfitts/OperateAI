@@ -85,7 +85,7 @@ class VoiceAssistantViewModel(
      */
     fun startListening() {
         voiceModule?.startListening(
-            wakeWordMode = _uiState.value.isContinuousListeningEnabled
+            constantListeningMode = _uiState.value.isContinuousListeningEnabled
         )
     }
     

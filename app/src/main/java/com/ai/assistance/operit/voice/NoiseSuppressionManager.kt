@@ -20,8 +20,8 @@ class NoiseSuppressionManager(private val context: Context) {
     
     // 降噪设置
     // TODO
-    private var noiseThreshold = 500 // 噪音阈值
-    private var suppressionStrength = 50 // 抑制强度 (0-100)
+    private var noiseThreshold = 100 // 噪音阈值
+    private var suppressionStrength = 10 // 抑制强度 (0-100)
     
     init {
         isNoiseSuppressionEnabled = isNoiseSuppressionAvailable()
@@ -31,11 +31,7 @@ class NoiseSuppressionManager(private val context: Context) {
      * 检查是否支持噪音抑制
      */
     private fun isNoiseSuppressionAvailable(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            NoiseSuppressor.isAvailable()
-        } else {
-            false
-        }
+        return NoiseSuppressor.isAvailable()
     }
     
     /**
@@ -43,7 +39,6 @@ class NoiseSuppressionManager(private val context: Context) {
      * @param audioSessionId 音频会话ID
      * @return 是否成功创建
      */
-    @RequiresApi(Build.VERSION_CODES.JELLY_BEAN)
     fun createNoiseSuppressor(audioSessionId: Int): Boolean {
         if (!isNoiseSuppressionAvailable() || audioSessionId == 0) {
             return false
@@ -137,7 +132,7 @@ class NoiseSuppressionManager(private val context: Context) {
         
         // 如果最大幅度低于阈值，适当放大
         if (maxAmplitude > 0 && maxAmplitude < 4000) {
-            val gain = minOf(2.0, 4000.0 / maxAmplitude) // 放大2倍或到阈值
+            val gain = minOf(8.0, 4000.0 / maxAmplitude) // 放大8倍或到阈值
             
             for (i in 0 until audioData.size step 2) {
                 if (i + 1 < audioData.size) {
@@ -206,7 +201,6 @@ class NoiseSuppressionManager(private val context: Context) {
      * 设置降噪强度 (如果支持)
      * @param strength 强度级别 (0-100)
      */
-    @RequiresApi(Build.VERSION_CODES.JELLY_BEAN)
     fun setNoiseSuppressionStrength(strength: Int) {
         this.suppressionStrength = strength.coerceIn(0, 100)
         

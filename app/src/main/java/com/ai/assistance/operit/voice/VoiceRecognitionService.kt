@@ -39,7 +39,7 @@ class VoiceRecognitionService(
     companion object {
         private const val TAG = "VoiceRecognitionService"
         private const val MAX_RESULTS = 3
-        private const val CONTINUOUS_LISTENING_DELAY = 500L // 500ms
+        private const val CONTINUOUS_LISTENING_DELAY = 1000L // 1000ms
     }
 
     /**
@@ -47,6 +47,7 @@ class VoiceRecognitionService(
      */
     enum class RecognitionProvider {
         ANDROID_BUILTIN,  // Android内置的SpeechRecognizer
+        VOSK,             // VOSK本地语音识别
         GOOGLE_MLKIT,     // Google的ML Kit本地语音识别
         WHISPER_LOCAL,    // 本地运行的Whisper模型
         OPENAI_API,       // OpenAI Whisper API
@@ -149,6 +150,9 @@ class VoiceRecognitionService(
                 RecognitionProvider.ANDROID_BUILTIN -> {
                     initializeAndroidRecognizer()
                 }
+                RecognitionProvider.VOSK -> {
+                    // TODO: 实现VOSK识别器
+                }
                 RecognitionProvider.GOOGLE_MLKIT -> {
                     // TODO: 实现ML Kit识别器
                     Log.i(TAG, "Google ML Kit recognizer not fully implemented yet, falling back to Android built-in")
@@ -227,6 +231,9 @@ class VoiceRecognitionService(
             when (currentProvider) {
                 RecognitionProvider.ANDROID_BUILTIN -> {
                     startAndroidRecognition(continuous, languageOverride)
+                }
+                RecognitionProvider.VOSK -> {
+
                 }
                 RecognitionProvider.GOOGLE_MLKIT, 
                 RecognitionProvider.WHISPER_LOCAL,
@@ -468,7 +475,8 @@ class VoiceRecognitionService(
                         
                         // 发送识别结果
                         _recognitionResults.emit(recognition)
-                        
+
+                        // 这里由于SpeechRecognizer没有持续监听模式，这里手动进行重新监听
                         // 检查是否需要继续监听
                         if (continuousListening) {
                             delay(CONTINUOUS_LISTENING_DELAY)
