@@ -95,7 +95,7 @@ class NoiseSuppressionManager(private val context: Context) {
      * @param audioData 原始音频数据
      * @return 降噪处理后的音频数据
      */
-    suspend fun processAudioBuffer(audioData: ByteArray): ByteArray {
+    fun processAudioBuffer(audioData: ByteArray): ByteArray {
         return if (isNoiseSuppressionEnabled && noiseSuppressor != null) {
             // TODO
             // 硬件降噪已启用，此时原始音频应该已经被处理

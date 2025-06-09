@@ -7,8 +7,11 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import com.ai.assistance.operit.api.EnhancedAIService
 import com.ai.assistance.operit.data.model.VoiceInputState
 import com.ai.assistance.operit.data.preferences.VoicePreferences
+import com.ai.assistance.operit.voice.recognizer.VoiceRecognizer
+import com.ai.assistance.operit.voice.recognizer.VoiceRecognizerFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,7 +37,8 @@ class VoiceRecognitionService(
     private val context: Context,
     private val voicePreferences: VoicePreferences,
     private val audioStreamManager: AudioStreamManager,
-    private val noiseSuppressionManager: NoiseSuppressionManager
+    private val noiseSuppressionManager: NoiseSuppressionManager,
+    private val enhancedAIService: EnhancedAIService
 ) {
     companion object {
         private const val TAG = "VoiceRecognitionService"
@@ -47,7 +51,7 @@ class VoiceRecognitionService(
      */
     enum class RecognitionProvider {
         ANDROID_BUILTIN,  // Android内置的SpeechRecognizer
-        VOSK,             // VOSK本地语音识别
+        FUN_AUDIO_LLM,    // FunAudioLLMAPI / LOCAL_MODEL
         GOOGLE_MLKIT,     // Google的ML Kit本地语音识别
         WHISPER_LOCAL,    // 本地运行的Whisper模型
         OPENAI_API,       // OpenAI Whisper API
@@ -55,8 +59,17 @@ class VoiceRecognitionService(
         GOOGLE_CLOUD      // Google Cloud Speech API
     }
     
-    // 语音识别器
-    private var speechRecognizer: SpeechRecognizer? = null
+    // 语音识别器工厂
+    private val recognizerFactory = VoiceRecognizerFactory(
+        context,
+        voicePreferences,
+        audioStreamManager,
+        noiseSuppressionManager,
+        enhancedAIService
+    )
+    
+    // 当前使用的语音识别器
+    private var currentRecognizer: VoiceRecognizer? = null
     
     // 语音识别状态
     private val _inputState = MutableStateFlow(
@@ -110,6 +123,7 @@ class VoiceRecognitionService(
     
     init {
         loadSettings()
+        setupCollectors()
     }
     
     /**
@@ -125,9 +139,11 @@ class VoiceRecognitionService(
                 // 加载识别提供商设置
                 try {
                     currentProvider = voicePreferences.getRecognitionProvider()
+                    initializeRecognizer()
                 } catch (e: Exception) {
                     Log.e(TAG, "Error loading recognition provider, using default", e)
                     currentProvider = RecognitionProvider.ANDROID_BUILTIN
+                    initializeRecognizer()
                 }
                 
             } catch (e: Exception) {
@@ -137,6 +153,24 @@ class VoiceRecognitionService(
                 preferredLanguage = Locale.getDefault().toString()
                 autoDetectLanguage = true
                 currentProvider = RecognitionProvider.ANDROID_BUILTIN
+                initializeRecognizer()
+            }
+        }
+    }
+    
+    /**
+     * 设置收集器
+     */
+    private fun setupCollectors() {
+        serviceScope.launch {
+            audioStreamManager.getCurrentNoiseLevel()
+            // 监听噪音级别
+            serviceScope.launch {
+                while (true) {
+                    val noiseLevel = audioStreamManager.getCurrentNoiseLevel() * 100f
+                    _inputState.value = _inputState.value.copy(noiseLevel = noiseLevel)
+                    delay(50) // 20Hz更新率
+                }
             }
         }
     }
@@ -146,39 +180,16 @@ class VoiceRecognitionService(
      */
     private fun initializeRecognizer() {
         try {
-            when (currentProvider) {
-                RecognitionProvider.ANDROID_BUILTIN -> {
-                    initializeAndroidRecognizer()
-                }
-                RecognitionProvider.VOSK -> {
-                    // TODO: 实现VOSK识别器
-                }
-                RecognitionProvider.GOOGLE_MLKIT -> {
-                    // TODO: 实现ML Kit识别器
-                    Log.i(TAG, "Google ML Kit recognizer not fully implemented yet, falling back to Android built-in")
-                    initializeAndroidRecognizer()
-                }
-                RecognitionProvider.WHISPER_LOCAL -> {
-                    // TODO: 实现本地Whisper模型
-                    Log.i(TAG, "Local Whisper recognizer not implemented yet, falling back to Android built-in")
-                    initializeAndroidRecognizer()
-                }
-                RecognitionProvider.OPENAI_API -> {
-                    // TODO: 实现OpenAI API
-                    Log.i(TAG, "OpenAI API recognizer not implemented yet, falling back to Android built-in")
-                    initializeAndroidRecognizer()
-                }
-                RecognitionProvider.AZURE_API -> {
-                    // TODO: 实现Azure API
-                    Log.i(TAG, "Azure API recognizer not implemented yet, falling back to Android built-in")
-                    initializeAndroidRecognizer()
-                }
-                RecognitionProvider.GOOGLE_CLOUD -> {
-                    // TODO: 实现Google Cloud API
-                    Log.i(TAG, "Google Cloud API recognizer not implemented yet, falling back to Android built-in")
-                    initializeAndroidRecognizer()
-                }
-            }
+            // 释放旧的识别器
+            currentRecognizer?.release()
+            
+            // 创建新的识别器
+            currentRecognizer = recognizerFactory.createRecognizer(currentProvider)
+            
+            // 设置收集器
+            setupRecognizerCollectors()
+            
+            Log.d(TAG, "Initialized recognizer for provider: $currentProvider")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize speech recognizer", e)
             serviceScope.launch {
@@ -188,15 +199,46 @@ class VoiceRecognitionService(
     }
     
     /**
-     * 初始化Android内置语音识别器
+     * 设置识别器收集器
      */
-    private fun initializeAndroidRecognizer() {
-        if (SpeechRecognizer.isRecognitionAvailable(context)) {
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-            speechRecognizer?.setRecognitionListener(recognitionListener)
-        } else {
+    private fun setupRecognizerCollectors() {
+        currentRecognizer?.let { recognizer ->
             serviceScope.launch {
-                _errors.emit(RecognitionError.ServiceNotAvailable)
+                // 收集识别结果
+                serviceScope.launch {
+                    recognizer.getRecognitionResultsFlow().collect { result ->
+                        _recognitionResults.emit(result)
+                        _inputState.value = _inputState.value.copy(
+                            isListening = false,
+                            partialResult = result
+                        )
+                    }
+                }
+                
+                // 收集部分识别结果
+                serviceScope.launch {
+                    recognizer.getPartialResultsFlow().collect { result ->
+                        _partialResults.emit(result)
+                        _inputState.value = _inputState.value.copy(partialResult = result)
+                    }
+                }
+                
+                // 收集错误
+                serviceScope.launch {
+                    recognizer.getErrorsFlow().collect { error ->
+                        when (error) {
+                            is RecognitionError -> _errors.emit(error)
+                            else -> _errors.emit(RecognitionError.UnknownError(-1))
+                        }
+                        _inputState.value = _inputState.value.copy(isListening = false)
+                        
+                        // 处理连续监听模式下的错误
+                        if (continuousListening && error is RecognitionError.NoMatch) {
+                            delay(CONTINUOUS_LISTENING_DELAY)
+                            startListening(true)
+                        }
+                    }
+                }
             }
         }
     }
@@ -214,7 +256,7 @@ class VoiceRecognitionService(
             stopListening()
         }
         
-        if (speechRecognizer == null) {
+        if (currentRecognizer == null) {
             initializeRecognizer()
         }
         
@@ -225,26 +267,8 @@ class VoiceRecognitionService(
                 recognitionConfidence = 0f
             )
             
-            // 启动AudioStreamManager
-            
-            // 根据当前提供商执行相应的启动逻辑
-            when (currentProvider) {
-                RecognitionProvider.ANDROID_BUILTIN -> {
-                    startAndroidRecognition(continuous, languageOverride)
-                }
-                RecognitionProvider.VOSK -> {
-
-                }
-                RecognitionProvider.GOOGLE_MLKIT, 
-                RecognitionProvider.WHISPER_LOCAL,
-                RecognitionProvider.OPENAI_API,
-                RecognitionProvider.AZURE_API,
-                RecognitionProvider.GOOGLE_CLOUD -> {
-                    // 暂时都使用Android内置识别
-                    // TODO
-                    startAndroidRecognition(continuous, languageOverride)
-                }
-            }
+            // 启动识别
+            currentRecognizer?.startRecognition(continuous, languageOverride)
             
         } catch (e: Exception) {
             Log.e(TAG, "Error starting speech recognition", e)
@@ -254,45 +278,12 @@ class VoiceRecognitionService(
     }
     
     /**
-     * 启动Android内置语音识别
-     */
-    private fun startAndroidRecognition(continuous: Boolean, languageOverride: String?) {
-        // 准备识别意图
-        val recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, MAX_RESULTS)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            
-            // 设置语言
-            val language = languageOverride ?: preferredLanguage
-            if (language != null && autoDetectLanguage) {
-                val languageTag = when (language) {
-                    "zh" -> "zh-CN"
-                    "en" -> "en-US"
-                    "jp" -> "ja-JP"
-                    else -> language
-                }
-
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
-            } else {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toString())
-            }
-        }
-        
-        continuousListening = continuous
-        speechRecognizer?.startListening(recognizerIntent)
-    }
-    
-    /**
      * 停止语音识别
      */
     fun stopListening() {
         try {
             continuousListening = false
-            speechRecognizer?.stopListening()
-            audioStreamManager.stopAudioStream()
+            currentRecognizer?.stopRecognition()
             _inputState.value = _inputState.value.copy(
                 isListening = false,
                 partialResult = ""
@@ -307,8 +298,7 @@ class VoiceRecognitionService(
      */
     suspend fun cancel() = withContext(Dispatchers.Main) {
         try {
-            speechRecognizer?.cancel()
-            audioStreamManager.stopAudioStream()
+            currentRecognizer?.cancelRecognition()
             _inputState.value = _inputState.value.copy(
                 isListening = false,
                 partialResult = ""
@@ -365,8 +355,8 @@ class VoiceRecognitionService(
                 stopListening()
             }
             
-            speechRecognizer?.destroy()
-            speechRecognizer = null
+            currentRecognizer?.release()
+            currentRecognizer = null
             
             // 更新当前提供商
             currentProvider = provider
@@ -393,117 +383,7 @@ class VoiceRecognitionService(
      */
     fun destroy() {
         serviceScope.coroutineContext.cancelChildren()
-        speechRecognizer?.destroy()
-        speechRecognizer = null
-    }
-    
-    /**
-     * 语音识别监听器
-     */
-    private val recognitionListener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {
-            serviceScope.launch {
-                _inputState.value = _inputState.value.copy(
-                    isListening = true,
-                    recognitionConfidence = 0f,
-                    partialResult = ""
-                )
-            }
-            Log.d(TAG, "Ready for speech")
-        }
-
-        override fun onBeginningOfSpeech() {
-            Log.d(TAG, "Beginning of speech")
-        }
-
-        override fun onRmsChanged(rmsdB: Float) {
-            // 将RMS值转换为0-100的噪音级别
-            val normalizedLevel = min((rmsdB + 100) / 100f, 1f) * 100f
-            serviceScope.launch {
-                _inputState.value = _inputState.value.copy(noiseLevel = normalizedLevel)
-            }
-        }
-
-        override fun onBufferReceived(buffer: ByteArray?) {
-            // 可以用于低级处理语音数据
-            buffer?.let { audioData ->
-                serviceScope.launch {
-                    val processedBuffer = noiseSuppressionManager.processAudioBuffer(audioData)
-                    // 这里可以处理处理后的音频缓冲区...
-                }
-            }
-        }
-
-        override fun onEndOfSpeech() {
-            Log.d(TAG, "End of speech")
-        }
-
-        override fun onError(error: Int) {
-            val errorType = when (error) {
-                SpeechRecognizer.ERROR_NO_MATCH -> RecognitionError.NoMatch
-                SpeechRecognizer.ERROR_NETWORK -> RecognitionError.NetworkError
-                SpeechRecognizer.ERROR_AUDIO -> RecognitionError.AudioError
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> RecognitionError.InsufficientPermissions
-                SpeechRecognizer.ERROR_CLIENT -> RecognitionError.UnknownError(error)
-                SpeechRecognizer.ERROR_SERVER -> RecognitionError.ServerError(error)
-                else -> RecognitionError.UnknownError(error)
-            }
-            
-            serviceScope.launch {
-                _errors.emit(errorType)
-                _inputState.value = _inputState.value.copy(isListening = false)
-                
-                if (continuousListening && errorType == RecognitionError.NoMatch) {
-                    // 如果是连续模式且没有匹配，短暂延迟后重新开始识别
-                    delay(CONTINUOUS_LISTENING_DELAY)
-                    startListening(true)
-                }
-            }
-        }
-
-        override fun onResults(results: Bundle?) {
-            results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let { matches ->
-                if (matches.isNotEmpty()) {
-                    val recognition = matches[0]
-                    
-                    serviceScope.launch {
-                        // 更新状态
-                        _inputState.value = _inputState.value.copy(
-                            partialResult = recognition,
-                            isListening = false
-                        )
-                        
-                        // 发送识别结果
-                        _recognitionResults.emit(recognition)
-
-                        // 这里由于SpeechRecognizer没有持续监听模式，这里手动进行重新监听
-                        // 检查是否需要继续监听
-                        if (continuousListening) {
-                            delay(CONTINUOUS_LISTENING_DELAY)
-                            startListening(true)
-                        }
-                    }
-                }
-            }
-        }
-
-        override fun onPartialResults(partialResults: Bundle?) {
-            partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.let { matches ->
-                if (matches.isNotEmpty()) {
-                    val partialRecognition = matches[0]
-                    
-                    serviceScope.launch {
-                        // 更新部分识别结果
-                        _inputState.value = _inputState.value.copy(partialResult = partialRecognition)
-                        _partialResults.emit(partialRecognition)
-                    }
-                }
-            }
-        }
-
-        override fun onEvent(eventType: Int, params: Bundle?) {
-            // 可以处理自定义事件
-            Log.d(TAG, "Speech recognizer event: $eventType")
-        }
+        currentRecognizer?.release()
+        currentRecognizer = null
     }
 } 

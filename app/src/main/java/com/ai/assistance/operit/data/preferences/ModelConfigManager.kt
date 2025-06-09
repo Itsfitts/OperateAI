@@ -1,9 +1,11 @@
 package com.ai.assistance.operit.data.preferences
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.CustomParameterData
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelConfigSummary
@@ -30,6 +32,8 @@ class ModelConfigManager(private val context: Context) {
 
     // 定义key
     companion object {
+        private const val TAG = "ModelConfigManager"
+        
         // 配置相关key
         val CONFIG_LIST = stringPreferencesKey("config_list")
         // 删除活跃配置ID
@@ -37,6 +41,10 @@ class ModelConfigManager(private val context: Context) {
         // 默认值
         const val DEFAULT_CONFIG_ID = "default"
         const val DEFAULT_CONFIG_NAME = "默认配置"
+        
+        // 语音识别配置
+        const val SPEECH_RECOGNITION_CONFIG_ID = "speech_recognition_default"
+        const val SPEECH_RECOGNITION_CONFIG_NAME = "语音识别配置"
     }
 
     // Json解析器，支持宽松模式
@@ -52,11 +60,9 @@ class ModelConfigManager(private val context: Context) {
     val configListFlow: Flow<List<String>> =
             context.modelConfigDataStore.data.map { preferences ->
                 val configList = preferences[CONFIG_LIST] ?: ""
-                if (configList.isEmpty()) listOf(DEFAULT_CONFIG_ID)
+                if (configList.isEmpty()) listOf(DEFAULT_CONFIG_ID, SPEECH_RECOGNITION_CONFIG_ID)
                 else json.decodeFromString<List<String>>(configList)
             }
-
-    // 删除获取当前活跃配置ID的流
 
     // 初始化，确保至少有一个默认配置
     suspend fun initializeIfNeeded() {
@@ -64,15 +70,33 @@ class ModelConfigManager(private val context: Context) {
         apiPreferences.ensureApiProviderTypeInitialized()
         
         val configList = configListFlow.first()
+        val updatedList = configList.toMutableList()
+        var needsUpdate = false
 
-        if (configList.isEmpty() || configList == listOf(DEFAULT_CONFIG_ID)) {
+        // 检查默认配置
+        if (!configList.contains(DEFAULT_CONFIG_ID)) {
             // 创建默认配置（从现有ApiPreferences导入）
             val defaultConfig = createDefaultConfigFromApiPreferences()
             saveModelConfig(defaultConfig)
+            updatedList.add(DEFAULT_CONFIG_ID)
+            needsUpdate = true
+            Log.d(TAG, "创建默认配置")
+        }
+        
+        // 检查语音识别配置
+        if (!configList.contains(SPEECH_RECOGNITION_CONFIG_ID)) {
+            // 创建语音识别配置
+            val speechRecognitionConfig = createSpeechRecognitionConfig()
+            saveModelConfig(speechRecognitionConfig)
+            updatedList.add(SPEECH_RECOGNITION_CONFIG_ID)
+            needsUpdate = true
+            Log.d(TAG, "创建语音识别配置")
+        }
 
-            // 保存配置列表，移除活跃ID
+        // 保存更新后的配置列表
+        if (needsUpdate) {
             context.modelConfigDataStore.edit { preferences ->
-                preferences[CONFIG_LIST] = json.encodeToString(listOf(DEFAULT_CONFIG_ID))
+                preferences[CONFIG_LIST] = json.encodeToString(updatedList)
             }
         }
     }
@@ -137,6 +161,91 @@ class ModelConfigManager(private val context: Context) {
                 customParameters = customParamsJson
         )
     }
+    
+    /**
+     * 创建语音识别专用配置
+     */
+    private suspend fun createSpeechRecognitionConfig(): ModelConfigData {
+        // 首先获取默认配置作为基础
+        val defaultConfig = getModelConfigFlow(DEFAULT_CONFIG_ID).first()
+
+        return defaultConfig.copy(
+            id = SPEECH_RECOGNITION_CONFIG_ID,
+            name = SPEECH_RECOGNITION_CONFIG_NAME,
+            apiEndpoint = "https://api.siliconflow.cn/v1/audio/transcriptions",
+            modelName = "FunAudioLLM/SenseVoiceSmall",
+            apiProviderType = ApiProviderType.SILICONFLOW,
+            // 禁用标准参数，因为语音转写API不使用这些参数
+            maxTokensEnabled = false,
+            temperatureEnabled = false,
+            topPEnabled = false,
+            topKEnabled = false,
+            presencePenaltyEnabled = false,
+            frequencyPenaltyEnabled = false,
+            repetitionPenaltyEnabled = false,
+            // 添加语音识别相关的自定义参数
+            hasCustomParameters = true,
+            customParameters = """
+                [
+                    {
+                        "id": "content_type",
+                        "name": "Content-Type",
+                        "apiName": "Content-Type",
+                        "description": "请求内容类型",
+                        "defaultValue": "multipart/form-data",
+                        "currentValue": "multipart/form-data",
+                        "isEnabled": true,
+                        "valueType": "STRING",
+                        "category": "SYSTEM"
+                    },
+                    {
+                        "id": "model",
+                        "name": "模型",
+                        "apiName": "model",
+                        "description": "使用的语音识别模型",
+                        "defaultValue": "FunAudioLLM/SenseVoiceSmall",
+                        "currentValue": "FunAudioLLM/SenseVoiceSmall",
+                        "isEnabled": true,
+                        "valueType": "STRING",
+                        "category": "SYSTEM"
+                    },
+                    {
+                        "id": "file_param_name",
+                        "name": "文件参数名",
+                        "apiName": "file_param_name",
+                        "description": "上传音频文件的参数名",
+                        "defaultValue": "file",
+                        "currentValue": "file",
+                        "isEnabled": true,
+                        "valueType": "STRING",
+                        "category": "SYSTEM"
+                    },
+                    {
+                        "id": "response_format",
+                        "name": "响应格式",
+                        "apiName": "response_format",
+                        "description": "API响应的格式",
+                        "defaultValue": "json",
+                        "currentValue": "json",
+                        "isEnabled": false,
+                        "valueType": "STRING",
+                        "category": "GENERATION"
+                    },
+                    {
+                        "id": "language",
+                        "name": "语言",
+                        "apiName": "language",
+                        "description": "识别的目标语言",
+                        "defaultValue": "zh",
+                        "currentValue": "zh",
+                        "isEnabled": false,
+                        "valueType": "STRING",
+                        "category": "GENERATION"
+                    }
+                ]
+            """.trimIndent()
+        )
+    }
 
     // 保存配置
     suspend fun saveModelConfig(config: ModelConfigData) {
@@ -156,17 +265,17 @@ class ModelConfigManager(private val context: Context) {
                     json.decodeFromString<ModelConfigData>(configJson)
                 } catch (e: Exception) {
                     // 如果解析失败，回退到创建一个新配置
-                    if (configId == DEFAULT_CONFIG_ID) {
-                        createDefaultConfigFromApiPreferences()
-                    } else {
-                        ModelConfigData(id = configId, name = "配置 $configId")
+                    when (configId) {
+                        DEFAULT_CONFIG_ID -> createDefaultConfigFromApiPreferences()
+                        SPEECH_RECOGNITION_CONFIG_ID -> createSpeechRecognitionConfig()
+                        else -> ModelConfigData(id = configId, name = "配置 $configId")
                     }
                 }
             } else {
-                if (configId == DEFAULT_CONFIG_ID) {
-                    createDefaultConfigFromApiPreferences()
-                } else {
-                    ModelConfigData(id = configId, name = "配置 $configId")
+                when (configId) {
+                    DEFAULT_CONFIG_ID -> createDefaultConfigFromApiPreferences()
+                    SPEECH_RECOGNITION_CONFIG_ID -> createSpeechRecognitionConfig()
+                    else -> ModelConfigData(id = configId, name = "配置 $configId")
                 }
             }
         }

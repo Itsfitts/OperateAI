@@ -513,6 +513,8 @@ fun getFunctionDisplayName(functionType: FunctionType): String {
                 FunctionType.SUMMARY -> "对话总结"
                 FunctionType.PERSONA -> "性格配置处理"
                 FunctionType.PROBLEM_LIBRARY -> "问题库管理"
+                FunctionType.VOICE -> "语音对话"
+                FunctionType.SPEECH_RECOGNITION -> "语音识别"
         }
 }
 
@@ -523,5 +525,7 @@ fun getFunctionDescription(functionType: FunctionType): String {
                 FunctionType.SUMMARY -> "生成对话总结，方便追踪重要信息"
                 FunctionType.PERSONA -> "处理用户提示词和性格设置的调整"
                 FunctionType.PROBLEM_LIBRARY -> "用于问题库的分析和管理"
+                FunctionType.VOICE -> "主要通过语音进行对话，用于和用户进行语音交互"
+                FunctionType.SPEECH_RECOGNITION -> "主要通过语音进行识别，返回识别文本"
         }
 }

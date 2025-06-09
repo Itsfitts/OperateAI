@@ -234,12 +234,12 @@ class VoicePreferences(private val context: Context) {
     suspend fun getRecognitionProvider(): VoiceRecognitionService.RecognitionProvider {
         return context.voiceDataStore.data.map { preferences ->
             val providerName = preferences[RECOGNITION_PROVIDER] 
-                ?: VoiceRecognitionService.RecognitionProvider.GOOGLE_MLKIT.name
+                ?: VoiceRecognitionService.RecognitionProvider.ANDROID_BUILTIN.name
             
             try {
                 VoiceRecognitionService.RecognitionProvider.valueOf(providerName)
             } catch (e: Exception) {
-                VoiceRecognitionService.RecognitionProvider.GOOGLE_MLKIT
+                VoiceRecognitionService.RecognitionProvider.ANDROID_BUILTIN
             }
         }.first()
     }

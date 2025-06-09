@@ -16,6 +16,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.sqrt
 
 /**
  * 音频流管理器
@@ -37,11 +42,24 @@ class AudioStreamManager(private val context: Context) {
     // 当前噪音水平 (0.0f - 1.0f)
     private var currentNoiseLevel = 0.0f
     
+    // 人声检测相关常量
+    companion object {
+        private const val TAG = "AudioStreamManager"
+        private const val ENERGY_THRESHOLD = 100.0 // 能量阈值
+        private const val ZCR_THRESHOLD = 0.15 // 零交叉率阈值
+        private const val HUMAN_VOICE_MIN_FREQ = 85.0 // 人声最低频率 (Hz)
+        private const val HUMAN_VOICE_MAX_FREQ = 255.0 // 人声最高频率 (Hz)
+        private const val FREQ_CONFIDENCE_THRESHOLD = 0.6 // 频率置信度阈值
+    }
+    
+    // 背景噪音能量基线
+    private var backgroundNoiseLevel = 0.0
+    
     /**
      * 开始音频流
      * @return 音频数据Flow
      */
-    private fun startAudioStream(): Flow<ByteArray> = flow {
+    fun startAudioStream(): Flow<ByteArray> = flow {
         if (isRecording) {
             stopAudioStream()
         }
@@ -174,7 +192,7 @@ class AudioStreamManager(private val context: Context) {
                 // 将有符号16位转换为有符号整数(-32768 to 32767)
                 val signedSample = if (sample > 32767) sample - 65536 else sample
                 // 更新峰值
-                peakAmplitude = Math.max(peakAmplitude, Math.abs(signedSample))
+                peakAmplitude = max(peakAmplitude, abs(signedSample))
                 // 累加平方值用于RMS计算
                 sum += signedSample * signedSample.toDouble()
             }
@@ -185,24 +203,24 @@ class AudioStreamManager(private val context: Context) {
         if (sampleCount == 0) return
         
         // 计算RMS (均方根)
-        val rms = Math.sqrt(sum / sampleCount)
+        val rms = sqrt(sum / sampleCount)
         // 16位音频的最大理论值是32768
         val maxValue = 32768.0
         
         // 计算RMS归一化值 (0.0-1.0)
-        val rmsNormalized = Math.min(1.0, rms / maxValue)
+        val rmsNormalized = min(1.0, rms / maxValue)
         
         // 计算峰值归一化值 (0.0-1.0)
-        val peakNormalized = Math.min(1.0, peakAmplitude.toDouble() / maxValue)
+        val peakNormalized = min(1.0, peakAmplitude.toDouble() / maxValue)
         
         // 结合RMS和峰值，更注重峰值以更好反映语音
         val combinedLevel = rmsNormalized * 0.4 + peakNormalized * 0.6
         
         // 应用非线性映射增强对低音量的敏感度
-        val enhancedLevel = Math.pow(combinedLevel, 0.6)
+        val enhancedLevel = combinedLevel.pow(0.6)
         
         // 平滑处理避免数值波动过大
-        currentNoiseLevel = (currentNoiseLevel * 0.7f + enhancedLevel.toFloat() * 0.3f)
+        currentNoiseLevel = (currentNoiseLevel * 0.9f + enhancedLevel.toFloat() * 0.3f)
     }
     
     /**
@@ -357,7 +375,186 @@ class AudioStreamManager(private val context: Context) {
         }
     }
     
-    companion object {
-        private const val TAG = "AudioStreamManager"
+    /**
+     * 收集背景噪音水平
+     * @param durationMs 收集时长(毫秒)
+     */
+    suspend fun collectBackgroundNoise(durationMs: Int = 500) {
+        try {
+            var samples = 0
+            var totalEnergy = 0.0
+            val startTime = System.currentTimeMillis()
+            
+            // 收集指定时长的背景噪音
+            startAudioStream().collect { audioData ->
+                if (System.currentTimeMillis() - startTime > durationMs) {
+                    stopAudioStream()
+                    return@collect
+                }
+                
+                val energy = calculateEnergy(audioData)
+                totalEnergy += energy
+                samples++
+            }
+            
+            if (samples > 0) {
+                backgroundNoiseLevel = totalEnergy / samples
+                // 设置噪音阈值为背景噪音的1.5倍
+                val adjustedThreshold = max(ENERGY_THRESHOLD, backgroundNoiseLevel * 1.5)
+                Log.d(TAG, "背景噪音水平: $backgroundNoiseLevel, 调整后的阈值: $adjustedThreshold")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "收集背景噪音时出错: ${e.message}")
+        }
     }
-} 
+    
+    /**
+     * 检测音频数据是否包含人声
+     * 使用多种特征进行检测：能量、零交叉率、频率特征
+     * @param audioData 音频数据
+     * @return 是否包含人声
+     */
+    fun hasHumanVoice(audioData: ByteArray): Boolean {
+        // 1. 能量检测
+        val energy = calculateEnergy(audioData)
+        val energyThreshold = max(ENERGY_THRESHOLD, backgroundNoiseLevel * 1.5)
+        val hasEnoughEnergy = energy > energyThreshold
+        
+        if (!hasEnoughEnergy) {
+            return false // 如果能量不足，直接返回false
+        }
+        
+        // 2. 零交叉率检测 - 人声通常有一定范围的零交叉率
+        val zcr = calculateZeroCrossingRate(audioData)
+        val hasValidZCR = zcr > ZCR_THRESHOLD
+        
+        // 3. 频率特征检测 - 检测是否包含人声频率范围内的主要频率
+        val frequencyConfidence = calculateFrequencyConfidence(audioData)
+        val hasHumanFrequency = frequencyConfidence > FREQ_CONFIDENCE_THRESHOLD
+        
+        // 综合判断
+        val isHumanVoice = hasEnoughEnergy && (hasValidZCR || hasHumanFrequency)
+        
+        if (isHumanVoice) {
+            Log.d(TAG, "检测到人声 - 能量: $energy (阈值: $energyThreshold), " +
+                    "零交叉率: $zcr (阈值: $ZCR_THRESHOLD), " +
+                    "频率置信度: $frequencyConfidence (阈值: $FREQ_CONFIDENCE_THRESHOLD)")
+        }
+        
+        return isHumanVoice
+    }
+    
+    /**
+     * 计算音频数据的能量
+     */
+    fun calculateEnergy(audioData: ByteArray): Double {
+        var energy = 0.0
+        val samples = ShortArray(audioData.size / 2)
+        
+        // 转换为short样本
+        for (i in audioData.indices step 2) {
+            if (i + 1 < audioData.size) {
+                val sample = (audioData[i].toInt() and 0xFF) or ((audioData[i + 1].toInt() and 0xFF) shl 8)
+                val signedSample = if (sample > 32767) sample - 65536 else sample
+                samples[i / 2] = signedSample.toShort()
+                energy += signedSample * signedSample
+            }
+        }
+        
+        // 计算平均能量
+        return if (samples.isNotEmpty()) energy / samples.size else 0.0
+    }
+    
+    /**
+     * 计算零交叉率 (Zero Crossing Rate)
+     * 零交叉率是信号从正变为负或从负变为正的比率
+     * 人声通常有一定范围的零交叉率
+     */
+    fun calculateZeroCrossingRate(audioData: ByteArray): Double {
+        val samples = ShortArray(audioData.size / 2)
+        
+        // 转换为short样本
+        for (i in audioData.indices step 2) {
+            if (i + 1 < audioData.size) {
+                val sample = (audioData[i].toInt() and 0xFF) or ((audioData[i + 1].toInt() and 0xFF) shl 8)
+                val signedSample = if (sample > 32767) sample - 65536 else sample
+                samples[i / 2] = signedSample.toShort()
+            }
+        }
+        
+        var crossings = 0
+        for (i in 1 until samples.size) {
+            if ((samples[i - 1] >= 0 && samples[i] < 0) || 
+                (samples[i - 1] < 0 && samples[i] >= 0)) {
+                crossings++
+            }
+        }
+        
+        return if (samples.size > 1) crossings.toDouble() / samples.size else 0.0
+    }
+    
+    /**
+     * 计算频率置信度
+     * 使用简化的频谱分析来检测是否包含人声频率范围内的主要频率
+     */
+    fun calculateFrequencyConfidence(audioData: ByteArray): Double {
+        val samples = ShortArray(audioData.size / 2)
+        
+        // 转换为short样本
+        for (i in audioData.indices step 2) {
+            if (i + 1 < audioData.size) {
+                val sample = (audioData[i].toInt() and 0xFF) or ((audioData[i + 1].toInt() and 0xFF) shl 8)
+                val signedSample = if (sample > 32767) sample - 65536 else sample
+                samples[i / 2] = signedSample.toShort()
+            }
+        }
+        
+        if (samples.isEmpty()) return 0.0
+        
+        // 使用简化的自相关法估计基频
+        val maxLag = sampleRate / HUMAN_VOICE_MIN_FREQ.toInt()
+        val minLag = sampleRate / HUMAN_VOICE_MAX_FREQ.toInt()
+        
+        var maxCorrelation = 0.0
+        var bestLag = 0
+        
+        for (lag in minLag..maxLag) {
+            var correlation = 0.0
+            var count = 0
+            
+            for (i in 0 until samples.size - lag) {
+                correlation += samples[i] * samples[i + lag]
+                count++
+            }
+            
+            if (count > 0) {
+                correlation /= count
+                
+                if (correlation > maxCorrelation) {
+                    maxCorrelation = correlation
+                    bestLag = lag
+                }
+            }
+        }
+        
+        // 如果没有找到有效的相关性，返回0
+        if (bestLag == 0 || maxCorrelation <= 0) {
+            return 0.0
+        }
+        
+        // 计算估计的基频
+        val estimatedFrequency = sampleRate.toDouble() / bestLag
+        
+        // 检查是否在人声频率范围内
+        if (estimatedFrequency >= HUMAN_VOICE_MIN_FREQ && 
+            estimatedFrequency <= HUMAN_VOICE_MAX_FREQ) {
+            
+            // 计算置信度 - 基于相关性强度和频率位置
+            val frequencyConfidence = min(1.0, maxCorrelation / 1000000.0)
+            
+            return frequencyConfidence
+        }
+        
+        return 0.0
+    }
+}

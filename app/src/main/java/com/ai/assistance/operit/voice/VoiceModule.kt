@@ -1,10 +1,16 @@
 package com.ai.assistance.operit.voice
 
 import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
 import com.ai.assistance.operit.api.EnhancedAIService
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.VoiceActionType
 import com.ai.assistance.operit.data.model.VoiceCommand
 import com.ai.assistance.operit.data.model.VoiceProfile
@@ -98,6 +104,7 @@ class VoiceModule(
         }
 
         try {
+            // TODO 暂时使用ChatHistoryDelegate
             voiceHistoryDelegate =
                 VoiceHistoryDelegate(
                     context = context,
@@ -113,7 +120,8 @@ class VoiceModule(
                 context,
                 voicePreferences,
                 audioStreamManager,
-                noiseSuppressionManager
+                noiseSuppressionManager,
+                aiService
             )
 
             textToSpeechService = TextToSpeechService(
@@ -315,7 +323,10 @@ class VoiceModule(
         val currentTime = System.currentTimeMillis()
         if (recognitionJob == null || currentTime - speakTimestamp >= timeoutMs) {
             cancelJob()
+
             recognitionJob = moduleScope.launch {
+                voiceRecognitionService.setRecognitionProvider(
+                    VoiceRecognitionService.RecognitionProvider.FUN_AUDIO_LLM)
                 // 直接开始语音识别
                 voiceRecognitionService.startListening(constantListeningMode)
                 voicePreferences.setReadResponseMode(ReadResponseMode.SMART)
@@ -379,18 +390,7 @@ class VoiceModule(
         // 使用命令处理器分析并执行命令
         val result = voiceCommandProcessor.processVoiceInput(text)
 
-        if (result.wasCommand) {
-            // 如果是命令，根据处理结果继续操作
-            if (result.needsConfirmation) {
-                // 需要用户确认的命令
-                // 在实际应用中，这里可能需要启动UI交互请求确认
-                val command = result.command
-                if (command != null) {
-                    speak("请确认您是否要${getCommandDescription(command)}？")
-                }
-            }
-        } else {
-            // 不是预定义命令，发送给AI处理
+        if (!result.wasCommand) {
             handleWithAI(text)
         }
     }
@@ -411,10 +411,9 @@ class VoiceModule(
             voiceHistoryDelegate.addMessageToChat(ChatMessage(sender = "user", content = text))
             _voiceState.value = _voiceState.value.copy(isProcessing = true)
 
-            // TODO: 这里使用sendMessage对于语音交互来说响应太慢，这里添加一些反馈，以确定发送消息给multiProvider了
-            if (!textToSpeechService.isSpeaking.value) {
-                speak("响应处理中 请稍后", true)
-            }
+            // if (!textToSpeechService.isSpeaking.value) {
+            //     speak("响应处理中 请稍后", true)
+            // }
 
             // 向AI发送消息
             aiService.sendMessage(
@@ -427,6 +426,7 @@ class VoiceModule(
                 },
                 chatHistory = voiceHistoryDelegate.getMemory(),
                 onComplete = { handleResponseComplete() },
+                functionType = FunctionType.VOICE,
                 chatId = chatId
             )
 
