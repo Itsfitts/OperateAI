@@ -90,9 +90,6 @@ class FunAudioLLMRecognizer(
     
     // 是否检测到有效语音
     private var hasDetectedSpeech = false
-
-    // 缓存识别结果
-    private var cacheVoiceText = StringBuilder()
     
     // 连续检测到人声的次数
     private var consecutiveVoiceDetections = 0
@@ -114,9 +111,7 @@ class FunAudioLLMRecognizer(
         
         // 订阅partialResults，将结果转发到recognitionResults
         partialResults.onEach { result ->
-            if (hasDetectedSpeech) {
-                cacheVoiceText.append(result).append(" ")
-            }
+            recognitionResults.tryEmit(result)
         }.launchIn(recognizerScope)
         
         Log.d(TAG, "FunAudioLLMRecognizer初始化完成")
@@ -219,11 +214,6 @@ class FunAudioLLMRecognizer(
                     if (!continuousMode) {
                         Log.d(TAG, "非连续模式，停止监听")
                         stopRecognition()
-
-                        if (!hasDetectedSpeech && cacheVoiceText.isNotBlank()) {
-                            recognitionResults.tryEmit(cacheVoiceText.toString())
-                            cacheVoiceText.clear()
-                        }
                     } else {
                         // 连续模式下，重置计时器
                         Log.d(TAG, "连续模式，重置计时器")
