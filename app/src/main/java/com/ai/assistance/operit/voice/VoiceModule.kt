@@ -572,22 +572,22 @@ class VoiceModule(
     private fun handleReadResponseMode(content: String) {
         when (readType) {
             ReadResponseMode.FULL -> {
-                speak(content)
+                speakWithLanguageDetection(content)
             }
 
             ReadResponseMode.SUMMARY -> {
                 val summary = textSummarizer.process(content)
-                speak(summary)
+                speakWithLanguageDetection(summary)
             }
 
             ReadResponseMode.SMART -> {
                 // 根据响应长度和内容决定如何朗读
                 val processText = textSummarizer.process(content)
-                speak(processText)
+                speakWithLanguageDetection(processText)
             }
 
             ReadResponseMode.STREAMING -> {
-                textToSpeechService.handleStreamingText(content)
+                textToSpeechService.handleStreamingTextWithLanguageDetection(content)
             }
         }
     }
@@ -623,6 +623,19 @@ class VoiceModule(
         }
 
         textToSpeechService.speak(text, interruptCurrent)
+    }
+
+    /**
+     * 使用TTS朗读文本（带自动语言检测）
+     * @param text 要朗读的文本
+     * @param interruptCurrent 是否中断当前朗读
+     */
+    fun speakWithLanguageDetection(text: String, interruptCurrent: Boolean = false) {
+        if (!_voiceState.value.isVoiceEnabled) {
+            return
+        }
+
+        textToSpeechService.detectLanguageAndSpeak(text, interruptCurrent)
     }
 
     /**

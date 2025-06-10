@@ -42,7 +42,7 @@ class FunAudioLLMRecognizer(
         private const val TAG = "FunAudioLLMRecognizer"
         private const val SAMPLE_RATE = 16000 // 16kHz
         private const val RECOGNITION_INTERVAL_MS = 300L // 识别间隔，毫秒
-        private const val SILENCE_THRESHOLD_MS = 800L // 静音阈值，毫秒
+        private const val SILENCE_THRESHOLD_MS = 1300L // 静音阈值，毫秒
         private const val MIN_AUDIO_SIZE = SAMPLE_RATE / 1 // 最小音频大小阈值 (1秒)
     }
 
@@ -179,11 +179,10 @@ class FunAudioLLMRecognizer(
                     lastSoundTime = System.currentTimeMillis()
                     consecutiveVoiceDetections++
                     consecutiveSilenceDetections = 0
-                    
-                    // 连续检测到3次人声才认为是真正的语音开始
-                    if (consecutiveVoiceDetections >= 3 && !hasDetectedSpeech) {
+
+                    if (consecutiveVoiceDetections >= 1 && !hasDetectedSpeech) {
                         hasDetectedSpeech = true
-                        Log.d(TAG, "检测到语音开始 (连续3次检测到人声)")
+                        Log.d(TAG, "检测到语音开始")
                     }
                 } else {
                     consecutiveVoiceDetections = 0

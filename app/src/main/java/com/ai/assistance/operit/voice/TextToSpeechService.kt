@@ -94,6 +94,25 @@ class TextToSpeechService(
     private var isStreamActive = false
 
     /**
+     * 常见语言的字符特征和语言代码映射
+     */
+    private val languagePatterns = mapOf(
+        "zh-CN" to Regex("[\\u4E00-\\u9FA5]"), // 中文字符
+        "ja-JP" to Regex("[\\u3040-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF]"), // 日文字符
+        "ko-KR" to Regex("[\\uAC00-\\uD7AF\\u1100-\\u11FF\\u3130-\\u318F]"), // 韩文字符
+        "ru-RU" to Regex("[\\u0400-\\u04FF]"), // 俄文字符
+        "ar-SA" to Regex("[\\u0600-\\u06FF]"), // 阿拉伯字符
+        "th-TH" to Regex("[\\u0E00-\\u0E7F]"), // 泰文字符
+        "hi-IN" to Regex("[\\u0900-\\u097F]"), // 印地文字符
+        "en-US" to Regex("[a-zA-Z]"), // 英文字符
+        "fr-FR" to Regex("[a-zA-ZàâäæçéèêëîïôœùûüÿÀÂÄÆÇÉÈÊËÎÏÔŒÙÛÜŸ]"), // 法语字符
+        "de-DE" to Regex("[a-zA-ZäöüßÄÖÜ]"), // 德语字符
+        "es-ES" to Regex("[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]"), // 西班牙语字符
+        "it-IT" to Regex("[a-zA-ZàèéìíîòóùúÀÈÉÌÍÎÒÓÙÚ]"), // 意大利语字符
+        "pt-PT" to Regex("[a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]") // 葡萄牙语字符
+    )
+
+    /**
      * TTS事件
      */
     sealed class TTSEvent {
@@ -306,6 +325,8 @@ class TextToSpeechService(
         val filteredVoices = availableVoices.filter {
             it.locale.language == locale.language
         }.let { voices ->
+
+            // TODO: 这里的如果使用Google原生的TTS的话，需要做完整的映射，而不是这样简单的筛选
             when (voiceType) {
                 VoiceType.MALE -> voices.filter { it.name.contains("male", ignoreCase = true) }
                 VoiceType.FEMALE -> voices.filter { it.name.contains("female", ignoreCase = true) }
@@ -660,6 +681,84 @@ class TextToSpeechService(
     }
 
     /**
+     * 自动检测文本语言并播放
+     * @param text 要播放的文本
+     * @param interrupt 是否中断当前播放
+     */
+    fun detectLanguageAndSpeak(text: String, interrupt: Boolean = false) {
+        if (text.isBlank()) return
+        if (!_isInitialized.value) return
+
+        // 检测语言
+        val detectedLanguage = detectTextLanguage(text)
+        
+        // 如果检测到的语言与当前语言不同，且该语言受支持，则切换语言
+        if (detectedLanguage != null && 
+            currentVoiceProfile?.language != detectedLanguage && 
+            isLanguageSupported(detectedLanguage)) {
+            
+            Log.d(TAG, "检测到文本语言: $detectedLanguage，切换TTS语言")
+            setLanguage(detectedLanguage)
+        }
+        
+        // 播放文本
+        speak(text, interrupt)
+    }
+
+    /**
+     * 自动检测文本所属的语言
+     * @param text 要检测的文本
+     * @return 检测到的语言代码，如果无法确定则返回null
+     */
+    private fun detectTextLanguage(text: String): String? {
+        if (text.isBlank()) return null
+        
+        // 统计每种语言的匹配字符数量
+        val languageScores = mutableMapOf<String, Int>()
+        
+        for ((languageCode, pattern) in languagePatterns) {
+            val matches = pattern.findAll(text)
+            val score = matches.count()
+            if (score > 0) {
+                languageScores[languageCode] = score
+            }
+        }
+        
+        // 如果没有匹配项，返回null
+        if (languageScores.isEmpty()) return null
+        
+        // 返回得分最高的语言
+        return languageScores.maxByOrNull { it.value }?.key
+    }
+
+    /**
+     * 自动检测文本语言并流式播放
+     * @param textChunk 新增的文本块
+     * @param isFirst 是否是第一个文本块
+     * @param isLast 是否是最后一个文本块
+     * @param interrupt 是否中断当前播放(仅在isFirst=true时有效)
+     * @return 操作是否成功
+     */
+    suspend fun detectLanguageAndStreamingSpeak(textChunk: String, isFirst: Boolean, isLast: Boolean, interrupt: Boolean = false): Boolean {
+        if (textChunk.isBlank()) return true // 空文本块被视为成功
+        if (!_isInitialized.value) return false
+        
+        // 仅在首个文本块时检测语言
+        if (isFirst) {
+            val detectedLanguage = detectTextLanguage(textChunk)
+            if (detectedLanguage != null && 
+                currentVoiceProfile?.language != detectedLanguage && 
+                isLanguageSupported(detectedLanguage)) {
+                
+                Log.d(TAG, "检测到流式文本语言: $detectedLanguage，切换TTS语言")
+                setLanguage(detectedLanguage)
+            }
+        }
+        
+        return streamingSpeak(textChunk, isFirst, isLast, interrupt)
+    }
+    
+    /**
      * 处理流式文本
      * 此方法接收AI生成的增量文本，并将其智能分割成适合阅读的句子块
      *
@@ -677,6 +776,85 @@ class TextToSpeechService(
             streamingSessionId = UUID.randomUUID().toString()
             pendingStreamText.clear()
             isStreamActive = true
+        }
+
+        // 添加新文本到缓存
+        pendingStreamText.append(newText)
+
+        // 检索可朗读的完整句子
+        val speakableText = extractSpeakableSentences(pendingStreamText.toString())
+
+        // 更新缓存，移除已处理的文本
+        if (speakableText.isNotEmpty()) {
+            pendingStreamText.delete(0, speakableText.length)
+        }
+
+        var success = true
+
+        if (speakableText.isNotEmpty() || isComplete) {
+            // 如果有可朗读的文本或者是最后一个文本块
+            val textToSpeak = if (isComplete) {
+                // 如果是最后一个块，朗读所有剩余文本
+                speakableText + pendingStreamText.toString()
+            } else {
+                speakableText
+            }
+
+            if (textToSpeak.isNotEmpty()) {
+                // 朗读文本
+                serviceScope.launch {
+                    try {
+                        success = streamingSpeak(
+                            textChunk = textToSpeak,
+                            isFirst = !isStreamActive,
+                            isLast = isComplete,
+                            interrupt = interrupt
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error handling streaming text", e)
+                    }
+                }
+
+                isStreamActive = true
+            }
+        }
+
+        // 如果完成，重置状态
+        if (isComplete) {
+            streamingSessionId = null
+            pendingStreamText.clear()
+            isStreamActive = false
+        }
+
+        return success
+    }
+    
+    /**
+     * 处理流式文本，并自动检测语言
+     * @param newText 新生成的文本（增量）
+     * @param isComplete 文本生成是否已完成
+     * @param interrupt 是否中断当前朗读
+     * @return 操作是否成功
+     */
+    fun handleStreamingTextWithLanguageDetection(newText: String, isComplete: Boolean = false, interrupt: Boolean = false): Boolean {
+        // 忽略空文本
+        if (newText.isBlank() && !isComplete) return true
+
+        // 首次调用时创建新的会话ID
+        if (streamingSessionId == null || interrupt) {
+            streamingSessionId = UUID.randomUUID().toString()
+            pendingStreamText.clear()
+            isStreamActive = true
+            
+            // 在初始文本上检测语言
+            val detectedLanguage = detectTextLanguage(newText)
+            if (detectedLanguage != null && 
+                currentVoiceProfile?.language != detectedLanguage && 
+                isLanguageSupported(detectedLanguage)) {
+                
+                Log.d(TAG, "检测到流式文本语言: $detectedLanguage，切换TTS语言")
+                setLanguage(detectedLanguage)
+            }
         }
 
         // 添加新文本到缓存
